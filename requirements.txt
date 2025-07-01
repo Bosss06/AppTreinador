@@ -1,7 +1,7 @@
 streamlit==1.46.1
-pillow==10.2.0  # Versão mais compatível
 fpdf2==2.7.7
 python-dotenv==1.0.0
 bcrypt==4.1.2
 pyopenssl==23.3.0
-setuptools==68.2.2
+setuptools==68.2.0
+pillow==11.3.0
