@@ -11,6 +11,18 @@ from typing import Dict, List, Optional
 import smtplib
 from email.mime.text import MIMEText
 from email.mime.multipart import MIMEMultipart
+import sys
+import subprocess
+
+def check_environment():
+    try:
+        subprocess.check_call([sys.executable, "-m", "pip", "check"])
+    except subprocess.CalledProcessError:
+        st.error("⚠️ Ambiente corrompido! Execute:")
+        st.code("pip install --force-reinstall -r requirements.txt")
+        st.stop()
+
+check_environment()
 
 
 
