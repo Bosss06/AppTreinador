@@ -13,6 +13,10 @@ from email.mime.text import MIMEText
 from email.mime.multipart import MIMEMultipart
 import sys
 import subprocess
+# Backup automático ao iniciar
+if not os.path.exists("backups/latest.zip"):
+    import subprocess
+    subprocess.run(["python", "scripts/backup.py"])
 
 def check_environment():
     try:
