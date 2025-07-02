@@ -17,6 +17,14 @@ import subprocess
 if not os.path.exists("backups/latest.zip"):
     import subprocess
     subprocess.run(["python", "scripts/backup.py"])
+    def check_permissions():
+    """Bloqueia ações de edição se for jogador"""
+    if st.session_state.get('tipo_usuario') == 'jogador':
+        st.session_state['read_only'] = True
+        if st.session_state.get('show_warning', True):
+            st.warning("🔐 Modo somente visualização - Apenas treinadores podem editar")
+            st.session_state.show_warning = False
+            st.stop()  # ⚠️ Adicione esta linha para interromper a execução
 
 def check_environment():
     try:
