@@ -338,7 +338,6 @@ def players_page() -> None:
         search_term = st.text_input("Buscar por nome")
     with col3:
         items_per_page = st.selectbox("Jogadores por página", [5, 10, 20], index=1)
-        
     if st.session_state.get('tipo_usuario') == 'treinador':
     with st.expander("🔑 Redefinir Senha de Jogador", expanded=False):
     with st.form("form_reset_senha"):
@@ -351,7 +350,7 @@ def players_page() -> None:
                 
                 if st.form_submit_button("🔄 Redefinir Senha"):
                     auth = Authentication()
-                 if auth.reset_password(jogador_selecionado, nova_senha):
+                if auth.reset_password(jogador_selecionado, nova_senha):
                         st.success(f"Senha de {jogador_selecionado} redefinida com sucesso!")
                     else:
                         st.error("Erro ao redefinir senha")
