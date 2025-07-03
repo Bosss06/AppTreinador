@@ -50,8 +50,6 @@ class PDFReport(FPDF, HTMLMixin):
 
 class Authentication:
     """Gerenciamento de autenticação seguro"""
-    class Authentication:
-    """Gerenciamento de autenticação seguro"""
     def __init__(self):
         # Apenas inicializa, não retorna valores
         if 'autenticado' not in st.session_state:
