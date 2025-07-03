@@ -58,6 +58,19 @@ class Authentication:
                 'user': None,
                 'jogador_info': None
             })
+            def reset_password(self, username: str, nova_senha: str) -> bool:
+        """Redefine a senha de um jogador"""
+        try:
+            data = DataManager.load_data()
+            for jogador in data.get('jogadores', []):
+                if jogador['nome'] == username:
+                    jogador['senha_hash'] = self.hash_password(nova_senha)
+                    DataManager.save_data(data)
+                    return True
+            return False
+        except Exception as e:
+            st.error(f"Erro ao redefinir senha: {str(e)}")
+            return False
     
     def hash_password(self, password: str) -> str:
         """Gera hash seguro da senha"""
