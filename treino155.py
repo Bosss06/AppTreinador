@@ -110,6 +110,7 @@ class Authentication:
         except Exception as e:
             st.error(f"Erro ao redefinir senha: {str(e)}")
             return False
+
 class DataManager:
     """Gerenciamento centralizado de dados"""
     DATA_FILE = 'data/dados_treino.json'
@@ -328,6 +329,23 @@ def players_page() -> None:
     st.title("👥 Gestão de Jogadores")
     data = DataManager.load_data()
     auth = Authentication()
+
+    if st.session_state.get('tipo_usuario') == 'treinador':
+        with st.expander("🔑 Redefinir Senha de Jogador", expanded=False):
+            with st.form("form_reset_senha"):
+                jogador_selecionado = st.selectbox(
+                    "Selecione o jogador",
+                    [j['nome'] for j in data['jogadores']],
+                    key="reset_select_jogador"
+                )
+                nova_senha = st.text_input("Nova senha temporária", type="password", value="jogador123")
+                
+                if st.form_submit_button("🔄 Redefinir Senha"):
+                    auth = Authentication()
+                    if auth.reset_password(jogador_selecionado, nova_senha):
+                        st.success(f"Senha de {jogador_selecionado} redefinida com sucesso!")
+                    else:
+                        st.error("Erro ao redefinir senha")
     
     # Filtros e busca
     col1, col2, col3 = st.columns(3)
@@ -338,22 +356,6 @@ def players_page() -> None:
         search_term = st.text_input("Buscar por nome")
     with col3:
         items_per_page = st.selectbox("Jogadores por página", [5, 10, 20], index=1)
-    if st.session_state.get('tipo_usuario') == 'treinador':
-    with st.expander("🔑 Redefinir Senha de Jogador", expanded=False):
-    with st.form("form_reset_senha"):
-                jogador_selecionado = st.selectbox(
-                    "Selecione o jogador",
-                    [j['nome'] for j in data['jogadores']],
-                    key="reset_select_jogador"
-                )
-                nova_senha = st.text_input("Nova senha temporária", type="password", value="jogador123")
-                
-                if st.form_submit_button("🔄 Redefinir Senha"):
-                    auth = Authentication()
-                if auth.reset_password(jogador_selecionado, nova_senha):
-                        st.success(f"Senha de {jogador_selecionado} redefinida com sucesso!")
-                    else:
-                        st.error("Erro ao redefinir senha")
     
     # Aplicar filtros
     filtered_players = data['jogadores']
