@@ -755,7 +755,7 @@ def games_page() -> None:
                 st.rerun()
     
    with tab2:
-    st.subheader("Próximos Jogos")
+        st.subheader("Próximos Jogos")
     proximos = [j for j in data.get('jogos', []) if not j.get('resultado')]
     
     if not proximos:
