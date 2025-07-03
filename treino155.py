@@ -754,27 +754,28 @@ def games_page() -> None:
                 st.success(f"Jogo contra {adversario} agendado para {data_jogo}!")
                 st.rerun()
     
-    with tab2:
-        st.subheader("Próximos Jogos")
-        proximos = [j for j in data.get('jogos', []) if not j.get('resultado')]
-        
-        if not proximos:
-            st.warning("Nenhum jogo agendado")
-        else:
-            for jogo in sorted(proximos, key=lambda x: x['data']):
-                with st.expander(f"📅 {jogo['data']} - {jogo['adversario']} ({jogo['tipo']})", expanded=False):
-                    cols = st.columns(3)
-                    cols[0].write(f"**Local:** {jogo['local']}")
-                    cols[1].write(f"**Hora:** {jogo['hora']}")
-                    cols[2].write(f"**Tática:** {jogo.get('tatica', 'A definir')}")
-                    
-                    st.write("**Convocados:**")
-                    for jogador in jogo['convocados']:
-                        st.write(f"- {jogador}")
-                    
-                    if st.session_state.get('tipo_usuario') == 'treinador':
-                        if st.button(f"Registrar Resultado", key=f"result_{jogo['data']}"):
-                            st.session_state['edit_game'] = jogo
+   with tab2:
+    st.subheader("Próximos Jogos")
+    proximos = [j for j in data.get('jogos', []) if not j.get('resultado')]
+    
+    if not proximos:
+        st.warning("Nenhum jogo agendado")
+    else:
+        for i, jogo in enumerate(sorted(proximos, key=lambda x: x['data'])):
+            with st.expander(f"📅 {jogo['data']} - {jogo['adversario']} ({jogo['tipo']})", expanded=False):
+                cols = st.columns(3)
+                cols[0].write(f"**Local:** {jogo['local']}")
+                cols[1].write(f"**Hora:** {jogo['hora']}")
+                cols[2].write(f"**Tática:** {jogo.get('tatica', 'A definir')}")
+                
+                st.write("**Convocados:**")
+                for jogador in jogo['convocados']:
+                    st.write(f"- {jogador}")
+                
+                if st.session_state.get('tipo_usuario') == 'treinador':
+                    # Adicione o índice 'i' para tornar a chave única
+                    if st.button(f"Registrar Resultado", key=f"result_{jogo['data']}_{i}"):
+                        st.session_state['edit_game'] = jogo
 
 def reports_page() -> None:
     """Página de relatórios"""
