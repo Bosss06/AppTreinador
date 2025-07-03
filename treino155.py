@@ -13,10 +13,12 @@ from email.mime.text import MIMEText
 from email.mime.multipart import MIMEMultipart
 import sys
 import subprocess
+
 # Backup automático ao iniciar
 if not os.path.exists("backups/latest.zip"):
     import subprocess
     subprocess.run(["python", "scripts/backup.py"])
+
 def check_environment():
     try:
         subprocess.check_call([sys.executable, "-m", "pip", "check"])
@@ -26,8 +28,6 @@ def check_environment():
         st.stop()
 
 check_environment()
-
-
 
 # Configurações iniciais
 load_dotenv()
@@ -190,16 +190,16 @@ class EmailSender:
             return False
 
 # --- Componentes da UI ---
-def show_player_card(jogador: Dict, edit_callback=None, delete_callback=None) -> None:
+def show_player_card(jogador: Dict, edit_callback=None, delete_callback=None, read_only=False) -> None:
     """Componente de cartão de jogador"""
     col1, col2 = st.columns([1, 3])
     
     with col1:
         if jogador.get('foto') and os.path.exists(jogador['foto']):
-            st.image(jogador['foto'], use_container_width=True)  # Alterado aqui
+            st.image(jogador['foto'], use_container_width=True)
         else:
             avatar_url = f"https://ui-avatars.com/api/?name={jogador['nome'].replace(' ', '+')}&size=150"
-            st.image(avatar_url, use_container_width=True)  # E aqui também
+            st.image(avatar_url, use_container_width=True)
     
     with col2:
         st.subheader(f"#{jogador.get('nr_camisola', '')} {jogador['nome']}")
@@ -213,7 +213,7 @@ def show_player_card(jogador: Dict, edit_callback=None, delete_callback=None) ->
             for i, pf in enumerate(jogador['pontos_fortes']):
                 cols[i%3].success(f"✓ {pf}")
         
-        if edit_callback and delete_callback:
+        if not read_only and edit_callback and delete_callback:
             bcol1, bcol2 = st.columns(2)
             with bcol1:
                 if st.button("✏️ Editar", key=f"edit_{jogador['nome']}"):
@@ -221,8 +221,13 @@ def show_player_card(jogador: Dict, edit_callback=None, delete_callback=None) ->
             with bcol2:
                 if st.button("❌ Remover", key=f"del_{jogador['nome']}"):
                     delete_callback(jogador)
+
 def tactic_editor() -> None:
     """Editor de táticas interativo"""
+    if st.session_state.get('tipo_usuario') != 'treinador':
+        st.warning("Apenas treinadores podem acessar esta funcionalidade")
+        return
+        
     st.subheader("Editor Tático")
     
     formacao = st.selectbox("Formação", ["4-4-2", "4-3-3", "3-5-2", "5-3-2"])
@@ -231,7 +236,6 @@ def tactic_editor() -> None:
     data = DataManager.load_data()
     jogadores = [j for j in data['jogadores'] if j.get('posicao')]
     
-    # Implementação do editor visual de táticas aqui
     st.info("Editor tático interativo será implementado aqui")
     st.write(f"Formação selecionada: {formacao}")
     st.write(f"Cor do time: {cor_time}")
@@ -254,20 +258,32 @@ def login_page(auth: Authentication) -> None:
 
 def dashboard_page() -> None:
     """Página inicial do dashboard"""
-    st.title("📊 Dashboard do Treinador")
+    st.title("📊 Dashboard do Treinador" if st.session_state.get('tipo_usuario') == 'treinador' else "📋 Meu Painel")
     data = DataManager.load_data()
     
-    col1, col2, col3 = st.columns(3)
-    col1.metric("👥 Jogadores", len(data['jogadores']))
-    col2.metric("📅 Treinos", len(data['treinos']))
-    col3.metric("⚽ Jogos", len(data.get('jogos', [])))
+    if st.session_state.get('tipo_usuario') == 'treinador':
+        col1, col2, col3 = st.columns(3)
+        col1.metric("👥 Jogadores", len(data['jogadores']))
+        col2.metric("📅 Treinos", len(data['treinos']))
+        col3.metric("⚽ Jogos", len(data.get('jogos', [])))
+    else:
+        jogador = st.session_state.get('jogador_info', {})
+        col1, col2 = st.columns(2)
+        col1.metric("📅 Próximos Treinos", len([t for t in data['treinos'].values() if jogador.get('nome') in t.get('participantes', [])]))
+        col2.metric("⚽ Próximos Jogos", len([j for j in data.get('jogos', []) if not j.get('resultado') and jogador.get('nome') in j.get('convocados', [])]))
     
     st.subheader("📅 Próximos Compromissos")
     tab1, tab2 = st.tabs(["Próximos Treinos", "Próximos Jogos"])
     
     with tab1:
-        if data['treinos']:
-            next_train = min(data['treinos'].items(), key=lambda x: datetime.strptime(x[0], '%Y-%m-%d'))
+        if st.session_state.get('tipo_usuario') == 'treinador':
+            treinos = data['treinos'].items()
+        else:
+            jogador_nome = st.session_state.get('jogador_info', {}).get('nome')
+            treinos = [(dt, t) for dt, t in data['treinos'].items() if jogador_nome in t.get('participantes', [])]
+        
+        if treinos:
+            next_train = min(treinos, key=lambda x: datetime.strptime(x[0], '%Y-%m-%d'))
             st.write(f"**Data:** {next_train[0]}")
             st.write(f"**Objetivo:** {next_train[1]['objetivo']}")
             st.write(f"**Exercícios:** {', '.join(next_train[1]['exercicios'])}")
@@ -275,8 +291,14 @@ def dashboard_page() -> None:
             st.warning("Nenhum treino agendado")
     
     with tab2:
-        if data.get('jogos'):
-            next_game = min(data['jogos'], key=lambda x: datetime.strptime(x['data'], '%Y-%m-%d'))
+        if st.session_state.get('tipo_usuario') == 'treinador':
+            jogos = [j for j in data.get('jogos', []) if not j.get('resultado')]
+        else:
+            jogador_nome = st.session_state.get('jogador_info', {}).get('nome')
+            jogos = [j for j in data.get('jogos', []) if not j.get('resultado') and jogador_nome in j.get('convocados', [])]
+        
+        if jogos:
+            next_game = min(jogos, key=lambda x: datetime.strptime(x['data'], '%Y-%m-%d'))
             st.write(f"**Data:** {next_game['data']}")
             st.write(f"**Adversário:** {next_game['adversario']}")
             st.write(f"**Local:** {next_game.get('local', 'A definir')}")
@@ -285,6 +307,10 @@ def dashboard_page() -> None:
 
 def players_page() -> None:
     """Página de gerenciamento de jogadores"""
+    if st.session_state.get('tipo_usuario') != 'treinador':
+        player_view_page()
+        return
+        
     st.title("👥 Gestão de Jogadores")
     data = DataManager.load_data()
     auth = Authentication()
@@ -370,15 +396,71 @@ def players_page() -> None:
             show_player_card(
                 jogador,
                 edit_callback=lambda j: st.session_state.update({'edit_player': j}),
-                delete_callback=lambda j: delete_player(j)
+                delete_callback=lambda j: delete_player(j),
+                read_only=False
             )
     
     # Formulário de edição
     if 'edit_player' in st.session_state:
         edit_player_form(st.session_state['edit_player'])
 
+def player_view_page():
+    """Página completa de visualização para jogadores"""
+    st.title("👤 Meu Perfil")
+    data = DataManager.load_data()
+    jogador = st.session_state.get('jogador_info')
+    
+    if not jogador:
+        st.warning("Informações do jogador não disponíveis")
+        return
+    
+    # Abas para organizar as informações
+    tab1, tab2, tab3 = st.tabs(["📋 Perfil", "📅 Treinos", "⚽ Jogos"])
+    
+    with tab1:
+        # Mostrar informações do jogador
+        show_player_card(jogador, read_only=True)
+    
+    with tab2:
+        # Mostrar treinos do jogador
+        st.subheader("Meus Próximos Treinos")
+        treinos_jogador = []
+        for data_treino, detalhes in data['treinos'].items():
+            if jogador['nome'] in detalhes.get('participantes', []):
+                treinos_jogador.append((data_treino, detalhes))
+        
+        if not treinos_jogador:
+            st.warning("Nenhum treino agendado para você")
+        else:
+            for data_treino, detalhes in sorted(treinos_jogador):
+                with st.expander(f"📅 {data_treino} - {detalhes['objetivo']}", expanded=False):
+                    st.write(f"**Local:** {detalhes['local']}")
+                    st.write(f"**Duração:** {detalhes['duracao']} min")
+                    st.write("**Exercícios:**")
+                    for exercicio in detalhes['exercicios']:
+                        st.write(f"- {exercicio}")
+    
+    with tab3:
+        # Mostrar jogos do jogador
+        st.subheader("Meus Próximos Jogos")
+        jogos_jogador = [j for j in data.get('jogos', []) 
+                        if not j.get('resultado') and jogador['nome'] in j.get('convocados', [])]
+        
+        if not jogos_jogador:
+            st.warning("Nenhum jogo agendado para você")
+        else:
+            for jogo in sorted(jogos_jogador, key=lambda x: x['data']):
+                with st.expander(f"📅 {jogo['data']} - vs {jogo['adversario']} ({jogo['tipo']})", expanded=False):
+                    st.write(f"**Local:** {jogo['local']}")
+                    st.write(f"**Hora:** {jogo['hora']}")
+                    st.write(f"**Tática Recomendada:** {jogo.get('tatica', 'A definir')}")
+
 def edit_player_form(jogador: Dict) -> None:
-    """Formulário de edição de jogador - Versão 100% Funcional"""
+    """Formulário de edição de jogador"""
+    if st.session_state.get('tipo_usuario') != 'treinador':
+        st.warning("Apenas treinadores podem editar jogadores")
+        return
+        
     st.title(f"✏️ Editando: {jogador['nome']}")
     data = DataManager.load_data()
     
@@ -452,9 +534,12 @@ def edit_player_form(jogador: Dict) -> None:
                 except Exception as e:
                     st.error(f"Erro ao salvar: {str(e)}")
 
-
 def delete_player(jogador: Dict) -> None:
     """Excluir jogador com confirmação"""
+    if st.session_state.get('tipo_usuario') != 'treinador':
+        st.warning("Apenas treinadores podem remover jogadores")
+        return
+        
     if st.checkbox(f"Confirmar exclusão de {jogador['nome']}?"):
         data = DataManager.load_data()
         data['jogadores'] = [j for j in data['jogadores'] if j['nome'] != jogador['nome']]
@@ -464,6 +549,11 @@ def delete_player(jogador: Dict) -> None:
 
 def training_page() -> None:
     """Página de gerenciamento de treinos"""
+    if st.session_state.get('tipo_usuario') == 'jogador':
+        st.title("📅 Meus Treinos")
+        player_view_page()
+        return
+        
     st.title("📅 Gestão de Treinos")
     data = DataManager.load_data()
     
@@ -561,6 +651,10 @@ def training_page() -> None:
 
 def tactics_page() -> None:
     """Página de táticas"""
+    if st.session_state.get('tipo_usuario') != 'treinador':
+        st.warning("Apenas treinadores podem acessar esta página")
+        return
+        
     st.title("📐 Táticas do Time")
     
     tab1, tab2 = st.tabs(["Editor Tático", "Táticas Salvas"])
@@ -581,6 +675,11 @@ def tactics_page() -> None:
 
 def games_page() -> None:
     """Página de gerenciamento de jogos"""
+    if st.session_state.get('tipo_usuario') == 'jogador':
+        st.title("⚽ Meus Jogos")
+        player_view_page()
+        return
+        
     st.title("⚽ Gestão de Jogos")
     data = DataManager.load_data()
     
@@ -641,11 +740,16 @@ def games_page() -> None:
                     for jogador in jogo['convocados']:
                         st.write(f"- {jogador}")
                     
-                    if st.button(f"Registrar Resultado", key=f"result_{jogo['data']}"):
-                        st.session_state['edit_game'] = jogo
+                    if st.session_state.get('tipo_usuario') == 'treinador':
+                        if st.button(f"Registrar Resultado", key=f"result_{jogo['data']}"):
+                            st.session_state['edit_game'] = jogo
 
 def reports_page() -> None:
     """Página de relatórios"""
+    if st.session_state.get('tipo_usuario') != 'treinador':
+        st.warning("Apenas treinadores podem acessar esta página")
+        return
+        
     st.title("📊 Relatórios e Estatísticas")
     data = DataManager.load_data()
     
@@ -695,6 +799,10 @@ def reports_page() -> None:
 
 def settings_page() -> None:
     """Página de configurações"""
+    if st.session_state.get('tipo_usuario') != 'treinador':
+        st.warning("Apenas treinadores podem acessar esta página")
+        return
+        
     st.title("⚙️ Configurações do Sistema")
     
     st.subheader("Backup de Dados")
@@ -738,22 +846,22 @@ def main() -> None:
         if st.session_state.get('tipo_usuario') == 'treinador':
             menu_options = ["🏠 Dashboard", "👥 Jogadores", "📅 Treinos", "⚽ Jogos", "📐 Táticas", "📊 Relatórios", "⚙️ Configurações"]
         else:
-            menu_options = ["🏠 Meu Perfil", "📅 Meus Treinos", "⚽ Próximos Jogos"]
-        
+            menu_options = ["🏠 Meu Perfil"]  # Menu simplificado para jogadores
+            
         selected = st.radio("Menu", menu_options)
         
         if st.button("🚪 Sair"):
             st.session_state.clear()
             st.rerun()
     
-    # Navegação entre páginas
-    if selected == "🏠 Dashboard" or selected == "🏠 Meu Perfil":
+    # Navegação entre páginas (simplificada para jogadores)
+    if selected == "🏠 Dashboard":
         dashboard_page()
     elif selected == "👥 Jogadores":
         players_page()
-    elif selected == "📅 Treinos" or selected == "📅 Meus Treinos":
+    elif selected == "📅 Treinos":
         training_page()
-    elif selected == "⚽ Jogos" or selected == "⚽ Próximos Jogos":
+    elif selected == "⚽ Jogos":
         games_page()
     elif selected == "📐 Táticas":
         tactics_page()
@@ -761,6 +869,8 @@ def main() -> None:
         reports_page()
     elif selected == "⚙️ Configurações":
         settings_page()
+    elif selected == "🏠 Meu Perfil":  # Única opção para jogadores
+        player_view_page()
 
 if __name__ == "__main__":
     main()
