@@ -51,7 +51,6 @@ class PDFReport(FPDF, HTMLMixin):
 class Authentication:
     """Gerenciamento de autenticação seguro"""
     def __init__(self):
-        # Apenas inicializa, não retorna valores
         if 'autenticado' not in st.session_state:
             st.session_state.update({
                 'autenticado': False,
@@ -65,7 +64,7 @@ class Authentication:
         return bcrypt.hashpw(password.encode(), bcrypt.gensalt()).decode()
     
     def login(self, username: str, password: str) -> bool:
-        """Realiza o login do usuário"""
+        """Verifica login pelo campo 'login' em vez de 'nome'"""
         try:
             # Verificação do administrador
             admin_user = os.getenv('ADMIN_USER')
@@ -80,15 +79,15 @@ class Authentication:
                     })
                     return True
 
-            # Verificação de jogadores
+            # Verificação de jogadores (agora pelo campo 'login')
             data = DataManager.load_data()
             for jogador in data.get('jogadores', []):
-                if jogador['nome'] == username and jogador.get('senha_hash'):
+                if jogador.get('login', '').lower() == username.lower() and jogador.get('senha_hash'):
                     if bcrypt.checkpw(password.encode(), jogador['senha_hash'].encode()):
                         st.session_state.update({
                             'autenticado': True,
                             'tipo_usuario': 'jogador',
-                            'user': username,
+                            'user': jogador['nome'],  # Mostra o nome completo na sessão
                             'jogador_info': jogador
                         })
                         return True
@@ -102,7 +101,7 @@ class Authentication:
         try:
             data = DataManager.load_data()
             for jogador in data.get('jogadores', []):
-                if jogador['nome'] == username:
+                if jogador.get('login', '').lower() == username.lower():
                     jogador['senha_hash'] = self.hash_password(nova_senha)
                     DataManager.save_data(data)
                     return True
@@ -329,23 +328,6 @@ def players_page() -> None:
     st.title("👥 Gestão de Jogadores")
     data = DataManager.load_data()
     auth = Authentication()
-
-    if st.session_state.get('tipo_usuario') == 'treinador':
-        with st.expander("🔑 Redefinir Senha de Jogador", expanded=False):
-            with st.form("form_reset_senha"):
-                jogador_selecionado = st.selectbox(
-                    "Selecione o jogador",
-                    [j['nome'] for j in data['jogadores']],
-                    key="reset_select_jogador"
-                )
-                nova_senha = st.text_input("Nova senha temporária", type="password", value="jogador123")
-                
-                if st.form_submit_button("🔄 Redefinir Senha"):
-                    auth = Authentication()
-                    if auth.reset_password(jogador_selecionado, nova_senha):
-                        st.success(f"Senha de {jogador_selecionado} redefinida com sucesso!")
-                    else:
-                        st.error("Erro ao redefinir senha")
     
     # Filtros e busca
     col1, col2, col3 = st.columns(3)
@@ -369,14 +351,18 @@ def players_page() -> None:
     page = st.number_input("Página", min_value=1, max_value=total_pages, value=1)
     paginated_players = filtered_players[(page-1)*items_per_page : page*items_per_page]
     
-    # Formulário de novo jogador
+    # Formulário de novo jogador - ESTRUTURA CORRIGIDA
     with st.expander("➕ Adicionar Novo Jogador", expanded=False):
-        with st.form("novo_jogador", clear_on_submit=True):
+        form_novo_jogador = st.form(key="form_novo_jogador", clear_on_submit=True)
+        with form_novo_jogador:
             cols = st.columns(2)
             with cols[0]:
-                nome = st.text_input("Nome Completo*")
+                nome_completo = st.text_input("Nome Completo*")
+                login = st.text_input("Nome para Login* (sem espaços, minúsculas)", 
+                                    help="Será usado para acessar o sistema")
                 posicao = st.selectbox("Posição*", ["Goleiro", "Defesa", "Meio-Campo", "Ataque"])
                 nr_camisola = st.number_input("Nº Camisola", min_value=1, max_value=99)
+            
             with cols[1]:
                 idade = st.number_input("Idade*", min_value=16, max_value=50)
                 telefone = st.text_input("Telefone*", placeholder="912345678")
@@ -385,21 +371,24 @@ def players_page() -> None:
             
             pontos_fortes = st.multiselect("Pontos Fortes", ["Finalização", "Velocidade", "Força", "Visão de Jogo", "Cabeceamento"])
             
-            if st.form_submit_button("💾 Salvar Jogador"):
-                if not nome or not posicao or not idade or not telefone or not email:
+            submitted = st.form_submit_button("💾 Salvar Jogador")
+            
+            if submitted:
+                if not nome_completo or not login or not posicao or not idade or not telefone or not email:
                     st.error("Preencha todos os campos obrigatórios (*)")
-                elif '@' not in email:
-                    st.error("Por favor, insira um e-mail válido")
+                elif ' ' in login:
+                    st.error("O nome para login não pode conter espaços")
                 else:
                     novo_jogador = {
-                        "nome": nome,
+                        "nome": nome_completo,
+                        "login": login.lower(),
                         "posicao": posicao,
                         "nr_camisola": nr_camisola,
                         "idade": idade,
                         "telefone": telefone,
                         "email": email,
                         "pontos_fortes": pontos_fortes,
-                        "senha_hash": auth.hash_password(f"jogador_{nome.lower()}"),
+                        "senha_hash": auth.hash_password(f"jogador_{login.lower()}"),
                         "foto": None
                     }
                     
@@ -407,7 +396,7 @@ def players_page() -> None:
                         try:
                             os.makedirs("data/fotos", exist_ok=True)
                             img = ImageOps.fit(Image.open(foto), (300, 300))
-                            foto_path = f"data/fotos/{nome.replace(' ', '_')}.png"
+                            foto_path = f"data/fotos/{login.lower().replace(' ', '_')}.png"
                             img.save(foto_path)
                             novo_jogador["foto"] = foto_path
                         except Exception as e:
@@ -417,7 +406,6 @@ def players_page() -> None:
                     DataManager.save_data(data)
                     st.success("Jogador adicionado com sucesso!")
                     st.rerun()
-    
     # Listagem de jogadores
     st.subheader(f"🏃‍♂️ Elenco ({len(filtered_players)} jogadores)")
     
@@ -488,83 +476,126 @@ def player_view_page():
                     st.write(f"**Tática Recomendada:** {jogo.get('tatica', 'A definir')}")
 
 def edit_player_form(jogador: Dict) -> None:
-    """Formulário de edição de jogador"""
+    """Formulário completo de edição de jogador com campo de login"""
     if st.session_state.get('tipo_usuario') != 'treinador':
         st.warning("Apenas treinadores podem editar jogadores")
         return
-        
+
     st.title(f"✏️ Editando: {jogador['nome']}")
     data = DataManager.load_data()
-    
-    form_key = f"form_edicao_{jogador['nome'].lower().replace(' ', '_')}"
-    
-    with st.form(key=form_key):
+    nome_original = jogador['nome']
+    login_original = jogador.get('login', jogador['nome'].lower().replace(' ', '_'))
+
+    with st.form(key=f"form_edicao_{login_original}"):
         cols = st.columns(2)
         with cols[0]:
-            novo_nome = st.text_input("Nome*", value=jogador['nome'])
+            novo_nome = st.text_input("Nome Completo*", value=jogador['nome'])
+            novo_login = st.text_input(
+                "Nome para Login*",
+                value=login_original,
+                help="Usado para acessar o sistema (sem espaços, minúsculas)"
+            )
             nova_posicao = st.selectbox(
-                "Posição*", 
+                "Posição*",
                 ["Goleiro", "Defesa", "Meio-Campo", "Ataque"],
                 index=["Goleiro", "Defesa", "Meio-Campo", "Ataque"].index(jogador['posicao'])
             )
-            novo_numero = st.number_input("Nº Camisola*", value=jogador.get('nr_camisola', 1), min_value=1, max_value=99)
-        
+            novo_numero = st.number_input(
+                "Nº Camisola*",
+                value=jogador.get('nr_camisola', 1),
+                min_value=1,
+                max_value=99
+            )
+
         with cols[1]:
             nova_idade = st.number_input("Idade*", value=jogador['idade'])
-            novo_telefone = st.text_input("Telefone", value=jogador.get('telefone', ''))
-            novo_email = st.text_input("E-mail*", value=jogador.get('email', ''))
-            nova_foto = st.file_uploader("Atualizar Foto", type=["jpg", "png", "jpeg"])
-        
+            novo_telefone = st.text_input(
+                "Telefone*",
+                value=jogador.get('telefone', '')
+            )
+            novo_email = st.text_input(
+                "E-mail*",
+                value=jogador.get('email', '')
+            )
+            nova_foto = st.file_uploader(
+                "Atualizar Foto",
+                type=["jpg", "png", "jpeg"],
+                help="Deixe em branco para manter a foto atual"
+            )
+
         novos_pontos = st.multiselect(
             "Pontos Fortes",
             ["Finalização", "Velocidade", "Força", "Visão de Jogo", "Cabeceamento"],
             default=jogador.get('pontos_fortes', [])
         )
-        
-        col1, col2 = st.columns(2)
-        with col1:
-            submitted = st.form_submit_button("💾 Salvar Alterações")
-        with col2:
-            if st.form_submit_button("❌ Cancelar"):
-                del st.session_state['edit_player']
-                st.rerun()
 
-        if submitted:
-            if '@' not in novo_email:
-                st.error("E-mail inválido")
-            else:
-                try:
-                    # Atualiza os dados
-                    jogador.update({
+        col1, col2, _ = st.columns([1, 1, 2])
+        with col1:
+            btn_salvar = st.form_submit_button("💾 Salvar Alterações")
+        with col2:
+            btn_cancelar = st.form_submit_button("❌ Cancelar")
+
+        if btn_salvar:
+            try:
+                # Validações
+                if not all([novo_nome, novo_login, nova_posicao, novo_email]):
+                    st.error("Preencha todos os campos obrigatórios (*)")
+                elif ' ' in novo_login:
+                    st.error("O nome para login não pode conter espaços")
+                elif '@' not in novo_email:
+                    st.error("Por favor, insira um e-mail válido")
+                else:
+                    # Prepara os dados atualizados
+                    jogador_atualizado = {
                         'nome': novo_nome,
+                        'login': novo_login.lower().strip(),
                         'posicao': nova_posicao,
                         'nr_camisola': novo_numero,
                         'idade': nova_idade,
                         'telefone': novo_telefone,
                         'email': novo_email,
-                        'pontos_fortes': novos_pontos
-                    })
-                    
+                        'pontos_fortes': novos_pontos,
+                        'senha_hash': jogador.get('senha_hash')  # Mantém a senha
+                    }
+
+                    # Tratamento da foto
                     if nova_foto:
+                        # Remove a foto antiga se existir
+                        if jogador.get('foto') and os.path.exists(jogador['foto']):
+                            os.remove(jogador['foto'])
+                        
+                        # Salva a nova foto
                         os.makedirs("data/fotos", exist_ok=True)
                         img = ImageOps.fit(Image.open(nova_foto), (300, 300))
-                        foto_path = f"data/fotos/{novo_nome.replace(' ', '_')}.png"
+                        foto_path = f"data/fotos/{novo_login}.png"
                         img.save(foto_path)
-                        jogador["foto"] = foto_path
-                    
+                        jogador_atualizado["foto"] = foto_path
+                    else:
+                        jogador_atualizado["foto"] = jogador.get('foto')
+
                     # Atualiza na lista principal
                     for i, j in enumerate(data['jogadores']):
-                        if j['nome'] == jogador['nome']:
-                            data['jogadores'][i] = jogador
+                        if j.get('login', j['nome'].lower().replace(' ', '_')) == login_original:
+                            data['jogadores'][i] = jogador_atualizado
                             break
-                    
+
                     DataManager.save_data(data)
-                    st.success("Jogador atualizado com sucesso!")
+                    
+                    # Atualiza a sessão se for o próprio jogador
+                    if st.session_state.get('jogador_info', {}).get('login') == login_original:
+                        st.session_state['jogador_info'] = jogador_atualizado
+                    
+                    st.success("Dados atualizados com sucesso!")
+                    time.sleep(1)  # Pequeno delay para visualização
                     del st.session_state['edit_player']
                     st.rerun()
-                
-                except Exception as e:
-                    st.error(f"Erro ao salvar: {str(e)}")
+
+            except Exception as e:
+                st.error(f"Erro crítico ao salvar: {str(e)}")
+
+        elif btn_cancelar:
+            del st.session_state['edit_player']
+            st.rerun()
 
 def delete_player(jogador: Dict) -> None:
     """Excluir jogador com confirmação"""
