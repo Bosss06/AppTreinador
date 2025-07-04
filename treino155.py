@@ -13,6 +13,7 @@ from email.mime.text import MIMEText
 from email.mime.multipart import MIMEMultipart
 import sys
 import subprocess
+import time
 
 # Backup automático ao iniciar
 if not os.path.exists("backups/latest.zip"):
@@ -79,15 +80,16 @@ class Authentication:
                     })
                     return True
 
-            # Verificação de jogadores (agora pelo campo 'login')
+            # Verificação de jogadores
             data = DataManager.load_data()
             for jogador in data.get('jogadores', []):
-                if jogador.get('login', '').lower() == username.lower() and jogador.get('senha_hash'):
+                login_jogador = jogador.get('login', jogador['nome'].lower().replace(' ', '_'))
+                if login_jogador.lower() == username.lower() and jogador.get('senha_hash'):
                     if bcrypt.checkpw(password.encode(), jogador['senha_hash'].encode()):
                         st.session_state.update({
                             'autenticado': True,
                             'tipo_usuario': 'jogador',
-                            'user': jogador['nome'],  # Mostra o nome completo na sessão
+                            'user': jogador['nome'],
                             'jogador_info': jogador
                         })
                         return True
@@ -217,7 +219,7 @@ def show_player_card(jogador: Dict, edit_callback=None, delete_callback=None, re
     
     with col2:
         st.subheader(f"#{jogador.get('nr_camisola', '')} {jogador['nome']}")
-        st.caption(f"Posição: {jogador['posicao']} | Idade: {jogador['idade']}")
+        st.caption(f"Login: {jogador.get('login', 'N/A')} | Posição: {jogador['posicao']} | Idade: {jogador['idade']}")
         st.write(f"**Telefone:** {jogador.get('telefone', '--')}")
         st.write(f"**E-mail:** {jogador.get('email', '--')}")
         
@@ -261,7 +263,7 @@ def login_page(auth: Authentication) -> None:
     st.title("🔐 Acesso Restrito")
     
     with st.form("login_form"):
-        username = st.text_input("Usuário")
+        username = st.text_input("Usuário (Login)")
         password = st.text_input("Senha", type="password")
         
         if st.form_submit_button("Entrar"):
@@ -351,10 +353,9 @@ def players_page() -> None:
     page = st.number_input("Página", min_value=1, max_value=total_pages, value=1)
     paginated_players = filtered_players[(page-1)*items_per_page : page*items_per_page]
     
-    # Formulário de novo jogador - ESTRUTURA CORRIGIDA
+    # Formulário de novo jogador
     with st.expander("➕ Adicionar Novo Jogador", expanded=False):
-        form_novo_jogador = st.form(key="form_novo_jogador", clear_on_submit=True)
-        with form_novo_jogador:
+        with st.form(key="form_novo_jogador", clear_on_submit=True):
             cols = st.columns(2)
             with cols[0]:
                 nome_completo = st.text_input("Nome Completo*")
@@ -371,9 +372,7 @@ def players_page() -> None:
             
             pontos_fortes = st.multiselect("Pontos Fortes", ["Finalização", "Velocidade", "Força", "Visão de Jogo", "Cabeceamento"])
             
-            submitted = st.form_submit_button("💾 Salvar Jogador")
-            
-            if submitted:
+            if st.form_submit_button("💾 Salvar Jogador"):
                 if not nome_completo or not login or not posicao or not idade or not telefone or not email:
                     st.error("Preencha todos os campos obrigatórios (*)")
                 elif ' ' in login:
@@ -406,6 +405,7 @@ def players_page() -> None:
                     DataManager.save_data(data)
                     st.success("Jogador adicionado com sucesso!")
                     st.rerun()
+    
     # Listagem de jogadores
     st.subheader(f"🏃‍♂️ Elenco ({len(filtered_players)} jogadores)")
     
@@ -425,7 +425,7 @@ def players_page() -> None:
         edit_player_form(st.session_state['edit_player'])
 
 def player_view_page():
-    """Página completa de visualização para jogadores"""
+    """Página de visualização para jogadores"""
     st.title("👤 Meu Perfil")
     data = DataManager.load_data()
     jogador = st.session_state.get('jogador_info')
@@ -434,64 +434,60 @@ def player_view_page():
         st.warning("Informações do jogador não disponíveis")
         return
     
-    # Abas para organizar as informações
-    tab1, tab2, tab3 = st.tabs(["📋 Perfil", "📅 Treinos", "⚽ Jogos"])
+    # Mostrar informações do jogador
+    show_player_card(jogador, read_only=True)
     
-    with tab1:
-        # Mostrar informações do jogador
-        show_player_card(jogador, read_only=True)
+    # Mostrar treinos do jogador
+    st.subheader("📅 Meus Próximos Treinos")
+    treinos_jogador = []
+    for data_treino, detalhes in data['treinos'].items():
+        if jogador['nome'] in detalhes.get('participantes', []):
+            treinos_jogador.append((data_treino, detalhes))
     
-    with tab2:
-        # Mostrar treinos do jogador
-        st.subheader("Meus Próximos Treinos")
-        treinos_jogador = []
-        for data_treino, detalhes in data['treinos'].items():
-            if jogador['nome'] in detalhes.get('participantes', []):
-                treinos_jogador.append((data_treino, detalhes))
-        
-        if not treinos_jogador:
-            st.warning("Nenhum treino agendado para você")
-        else:
-            for data_treino, detalhes in sorted(treinos_jogador):
-                with st.expander(f"📅 {data_treino} - {detalhes['objetivo']}", expanded=False):
-                    st.write(f"**Local:** {detalhes['local']}")
-                    st.write(f"**Duração:** {detalhes['duracao']} min")
-                    st.write("**Exercícios:**")
-                    for exercicio in detalhes['exercicios']:
-                        st.write(f"- {exercicio}")
+    if not treinos_jogador:
+        st.warning("Nenhum treino agendado para você")
+    else:
+        for data_treino, detalhes in sorted(treinos_jogador):
+            with st.expander(f"📅 {data_treino} - {detalhes['objetivo']}", expanded=False):
+                st.write(f"**Local:** {detalhes['local']}")
+                st.write(f"**Duração:** {detalhes['duracao']} min")
+                st.write("**Exercícios:**")
+                for exercicio in detalhes['exercicios']:
+                    st.write(f"- {exercicio}")
     
-    with tab3:
-        # Mostrar jogos do jogador
-        st.subheader("Meus Próximos Jogos")
-        jogos_jogador = [j for j in data.get('jogos', []) 
-                        if not j.get('resultado') and jogador['nome'] in j.get('convocados', [])]
-        
-        if not jogos_jogador:
-            st.warning("Nenhum jogo agendado para você")
-        else:
-            for jogo in sorted(jogos_jogador, key=lambda x: x['data']):
-                with st.expander(f"📅 {jogo['data']} - vs {jogo['adversario']} ({jogo['tipo']})", expanded=False):
-                    st.write(f"**Local:** {jogo['local']}")
-                    st.write(f"**Hora:** {jogo['hora']}")
-                    st.write(f"**Tática Recomendada:** {jogo.get('tatica', 'A definir')}")
+    # Mostrar jogos do jogador
+    st.subheader("⚽ Meus Próximos Jogos")
+    jogos_jogador = [j for j in data.get('jogos', []) 
+                    if not j.get('resultado') and jogador['nome'] in j.get('convocados', [])]
+    
+    if not jogos_jogador:
+        st.warning("Nenhum jogo agendado para você")
+    else:
+        for jogo in sorted(jogos_jogador, key=lambda x: x['data']):
+            with st.expander(f"📅 {jogo['data']} - vs {jogo['adversario']} ({jogo['tipo']})", expanded=False):
+                st.write(f"**Local:** {jogo['local']}")
+                st.write(f"**Hora:** {jogo['hora']}")
+                st.write(f"**Tática Recomendada:** {jogo.get('tatica', 'A definir')}")
 
 def edit_player_form(jogador: Dict) -> None:
-    """Formulário completo de edição de jogador com campo de login"""
+    """Formulário de edição de jogador - Versão Corrigida"""
     if st.session_state.get('tipo_usuario') != 'treinador':
         st.warning("Apenas treinadores podem editar jogadores")
         return
 
     st.title(f"✏️ Editando: {jogador['nome']}")
     data = DataManager.load_data()
-    nome_original = jogador['nome']
+    auth = Authentication()
+    
+    # Garante que o jogador tem um login válido
     login_original = jogador.get('login', jogador['nome'].lower().replace(' ', '_'))
-
+    
     with st.form(key=f"form_edicao_{login_original}"):
         cols = st.columns(2)
         with cols[0]:
             novo_nome = st.text_input("Nome Completo*", value=jogador['nome'])
             novo_login = st.text_input(
-                "Nome para Login*",
+                "Nome para Login*", 
                 value=login_original,
                 help="Usado para acessar o sistema (sem espaços, minúsculas)"
             )
@@ -500,28 +496,13 @@ def edit_player_form(jogador: Dict) -> None:
                 ["Goleiro", "Defesa", "Meio-Campo", "Ataque"],
                 index=["Goleiro", "Defesa", "Meio-Campo", "Ataque"].index(jogador['posicao'])
             )
-            novo_numero = st.number_input(
-                "Nº Camisola*",
-                value=jogador.get('nr_camisola', 1),
-                min_value=1,
-                max_value=99
-            )
+            novo_numero = st.number_input("Nº Camisola*", value=jogador.get('nr_camisola', 1), min_value=1, max_value=99)
 
         with cols[1]:
             nova_idade = st.number_input("Idade*", value=jogador['idade'])
-            novo_telefone = st.text_input(
-                "Telefone*",
-                value=jogador.get('telefone', '')
-            )
-            novo_email = st.text_input(
-                "E-mail*",
-                value=jogador.get('email', '')
-            )
-            nova_foto = st.file_uploader(
-                "Atualizar Foto",
-                type=["jpg", "png", "jpeg"],
-                help="Deixe em branco para manter a foto atual"
-            )
+            novo_telefone = st.text_input("Telefone*", value=jogador.get('telefone', ''))
+            novo_email = st.text_input("E-mail*", value=jogador.get('email', ''))
+            nova_foto = st.file_uploader("Atualizar Foto", type=["jpg", "png", "jpeg"])
 
         novos_pontos = st.multiselect(
             "Pontos Fortes",
@@ -529,13 +510,15 @@ def edit_player_form(jogador: Dict) -> None:
             default=jogador.get('pontos_fortes', [])
         )
 
-        col1, col2, _ = st.columns([1, 1, 2])
+        col1, col2 = st.columns(2)
         with col1:
-            btn_salvar = st.form_submit_button("💾 Salvar Alterações")
+            submitted = st.form_submit_button("💾 Salvar Alterações")
         with col2:
-            btn_cancelar = st.form_submit_button("❌ Cancelar")
+            if st.form_submit_button("❌ Cancelar"):
+                del st.session_state['edit_player']
+                st.rerun()
 
-        if btn_salvar:
+        if submitted:
             try:
                 # Validações
                 if not all([novo_nome, novo_login, nova_posicao, novo_email]):
@@ -545,7 +528,7 @@ def edit_player_form(jogador: Dict) -> None:
                 elif '@' not in novo_email:
                     st.error("Por favor, insira um e-mail válido")
                 else:
-                    # Prepara os dados atualizados
+                    # Prepara dados atualizados
                     jogador_atualizado = {
                         'nome': novo_nome,
                         'login': novo_login.lower().strip(),
@@ -555,23 +538,22 @@ def edit_player_form(jogador: Dict) -> None:
                         'telefone': novo_telefone,
                         'email': novo_email,
                         'pontos_fortes': novos_pontos,
-                        'senha_hash': jogador.get('senha_hash')  # Mantém a senha
+                        'senha_hash': jogador.get('senha_hash', auth.hash_password(f"jogador_{novo_login.lower()}")),
+                        'foto': jogador.get('foto')
                     }
 
-                    # Tratamento da foto
+                    # Atualiza foto se fornecida
                     if nova_foto:
-                        # Remove a foto antiga se existir
+                        # Remove foto antiga se existir
                         if jogador.get('foto') and os.path.exists(jogador['foto']):
                             os.remove(jogador['foto'])
                         
-                        # Salva a nova foto
+                        # Salva nova foto
                         os.makedirs("data/fotos", exist_ok=True)
                         img = ImageOps.fit(Image.open(nova_foto), (300, 300))
-                        foto_path = f"data/fotos/{novo_login}.png"
+                        foto_path = f"data/fotos/{novo_login.lower().replace(' ', '_')}.png"
                         img.save(foto_path)
                         jogador_atualizado["foto"] = foto_path
-                    else:
-                        jogador_atualizado["foto"] = jogador.get('foto')
 
                     # Atualiza na lista principal
                     for i, j in enumerate(data['jogadores']):
@@ -580,22 +562,18 @@ def edit_player_form(jogador: Dict) -> None:
                             break
 
                     DataManager.save_data(data)
+                    st.success("Jogador atualizado com sucesso!")
                     
                     # Atualiza a sessão se for o próprio jogador
                     if st.session_state.get('jogador_info', {}).get('login') == login_original:
                         st.session_state['jogador_info'] = jogador_atualizado
                     
-                    st.success("Dados atualizados com sucesso!")
-                    time.sleep(1)  # Pequeno delay para visualização
+                    time.sleep(1)
                     del st.session_state['edit_player']
                     st.rerun()
 
             except Exception as e:
-                st.error(f"Erro crítico ao salvar: {str(e)}")
-
-        elif btn_cancelar:
-            del st.session_state['edit_player']
-            st.rerun()
+                st.error(f"Erro ao salvar: {str(e)}")
 
 def delete_player(jogador: Dict) -> None:
     """Excluir jogador com confirmação"""
@@ -786,27 +764,26 @@ def games_page() -> None:
                 st.rerun()
     
     with tab2:
-         st.subheader("Próximos Jogos")
-    proximos = [j for j in data.get('jogos', []) if not j.get('resultado')]
-    
-    if not proximos:
-        st.warning("Nenhum jogo agendado")
-    else:
-        for i, jogo in enumerate(sorted(proximos, key=lambda x: x['data'])):
-            with st.expander(f"📅 {jogo['data']} - {jogo['adversario']} ({jogo['tipo']})", expanded=False):
-                cols = st.columns(3)
-                cols[0].write(f"**Local:** {jogo['local']}")
-                cols[1].write(f"**Hora:** {jogo['hora']}")
-                cols[2].write(f"**Tática:** {jogo.get('tatica', 'A definir')}")
-                
-                st.write("**Convocados:**")
-                for jogador in jogo['convocados']:
-                    st.write(f"- {jogador}")
-                
-                if st.session_state.get('tipo_usuario') == 'treinador':
-                    # Adicione o índice 'i' para tornar a chave única
-                    if st.button(f"Registrar Resultado", key=f"result_{jogo['data']}_{i}"):
-                        st.session_state['edit_game'] = jogo
+        st.subheader("Próximos Jogos")
+        proximos = [j for j in data.get('jogos', []) if not j.get('resultado')]
+        
+        if not proximos:
+            st.warning("Nenhum jogo agendado")
+        else:
+            for i, jogo in enumerate(sorted(proximos, key=lambda x: x['data'])):
+                with st.expander(f"📅 {jogo['data']} - {jogo['adversario']} ({jogo['tipo']})", expanded=False):
+                    cols = st.columns(3)
+                    cols[0].write(f"**Local:** {jogo['local']}")
+                    cols[1].write(f"**Hora:** {jogo['hora']}")
+                    cols[2].write(f"**Tática:** {jogo.get('tatica', 'A definir')}")
+                    
+                    st.write("**Convocados:**")
+                    for jogador in jogo['convocados']:
+                        st.write(f"- {jogador}")
+                    
+                    if st.session_state.get('tipo_usuario') == 'treinador':
+                        if st.button(f"Registrar Resultado", key=f"result_{jogo['data']}_{i}"):
+                            st.session_state['edit_game'] = jogo
 
 def reports_page() -> None:
     """Página de relatórios"""
@@ -897,6 +874,20 @@ def main() -> None:
     """Função principal da aplicação"""
     auth = Authentication()
     
+    # Migração para jogadores existentes (executar uma vez)
+    data = DataManager.load_data()
+    needs_save = False
+    for jogador in data['jogadores']:
+        if 'login' not in jogador:
+            jogador['login'] = jogador['nome'].lower().replace(' ', '_')
+            needs_save = True
+        if 'senha_hash' not in jogador:
+            jogador['senha_hash'] = auth.hash_password(f"jogador_{jogador['login']}")
+            needs_save = True
+    
+    if needs_save:
+        DataManager.save_data(data)
+    
     if not st.session_state.get('autenticado'):
         login_page(auth)
         return
@@ -918,7 +909,7 @@ def main() -> None:
             st.session_state.clear()
             st.rerun()
     
-    # Navegação entre páginas (simplificada para jogadores)
+    # Navegação entre páginas
     if selected == "🏠 Dashboard":
         dashboard_page()
     elif selected == "👥 Jogadores":
@@ -933,7 +924,7 @@ def main() -> None:
         reports_page()
     elif selected == "⚙️ Configurações":
         settings_page()
-    elif selected == "🏠 Meu Perfil":  # Única opção para jogadores
+    elif selected == "🏠 Meu Perfil":
         player_view_page()
 
 if __name__ == "__main__":
