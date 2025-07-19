@@ -377,8 +377,8 @@ class UIComponents:
                 with cols[0]:
                     nome = st.text_input("Nome Completo*", value=dados['nome'])
                     login = st.text_input("Login* (sem espaços)", value=dados['login'], disabled=modo_edicao)
-                    posicao = st.selectbox("Posição*", ["Goleiro", "Defesa", "Meio-Campo", "Ataque"],
-                                         index=["Goleiro", "Defesa", "Meio-Campo", "Ataque"].index(dados['posicao']))
+                    posicao = st.selectbox("Posição*", ["Guarda-Redes", "Defesa", "Meio-Campo", "Ataque"],
+                                         index=["Guarda-Redes", "Defesa", "Meio-Campo", "Ataque"].index(dados['posicao']))
                     numero = st.number_input("Nº Camisola", value=dados['nr_camisola'], min_value=1, max_value=99)
                     altura = st.number_input("Altura (m)*", value=dados['altura'], min_value=1.50, max_value=2.20, step=0.01)
                 
