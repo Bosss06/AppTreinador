@@ -2,6 +2,10 @@ import os
 import shutil
 from datetime import datetime
 import json
+from data_manager import DataManager
+
+backup_url = DataManager.create_backup()
+print(f"BACKUP CRÍTICO (ANTES DA MIGRAÇÃO): {backup_url}")
 
 def backup_data():
     """Função simplificada de backup"""
