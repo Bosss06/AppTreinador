@@ -9,14 +9,6 @@ from dropbox.exceptions import AuthError
 logger = logging.getLogger(__name__)
 logger.setLevel(logging.INFO)
 
-# Configura o formato das mensagens
-formatter = logging.Formatter('%(asctime)s - %(name)s - %(levelname)s - %(message)s')
-
-# Configura o handler para exibir no console
-ch = logging.StreamHandler()
-ch.setFormatter(formatter)
-logger.addHandler(ch)
-
 class DataManager:
     @staticmethod
     def load_data() -> dict:
@@ -30,20 +22,9 @@ class DataManager:
             with open(DATA_FILE, 'r', encoding='utf-8') as f:
                 return json.load(f)
         except Exception as e:
-            logging.error(f"Erro ao carregar dados: {str(e)}")
+            logger.error(f"Erro ao carregar dados: {str(e)}")
             return DataManager._initialize_data()
 
-    @staticmethod
-    def _initialize_data() -> dict:
-        """Retorna estrutura inicial dos dados"""
-        return {
-            'treinos': {},
-            'jogos': [],
-            'jogadores': [],
-            'taticas': [],
-            'exercicios': {}
-        }
-        
     @staticmethod
     def create_backup() -> str:
         """Cria backup e envia para o Dropbox"""
