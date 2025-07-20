@@ -13,6 +13,7 @@ from fpdf import FPDF, HTMLMixin
 from dotenv import load_dotenv
 from email.mime.text import MIMEText
 from email.mime.multipart import MIMEMultipart
+
 from data_manager import DataManager
 
 # --- Configurações Iniciais ---
