@@ -13,9 +13,6 @@ from fpdf import FPDF, HTMLMixin
 from dotenv import load_dotenv
 from email.mime.text import MIMEText
 from email.mime.multipart import MIMEMultipart
-from google.oauth2 import service_account
-from googleapiclient.discovery import build
-from googleapiclient.http import MediaFileUpload
 from data_manager import DataManager
 
 # --- Configurações Iniciais ---
