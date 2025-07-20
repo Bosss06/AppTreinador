@@ -13,6 +13,10 @@ from fpdf import FPDF, HTMLMixin
 from dotenv import load_dotenv
 from email.mime.text import MIMEText
 from email.mime.multipart import MIMEMultipart
+from google.oauth2 import service_account
+from googleapiclient.discovery import build
+from googleapiclient.http import MediaFileUpload
+from data_manager import DataManager
 
 # --- Configurações Iniciais ---
 load_dotenv()
@@ -21,7 +25,6 @@ logging.basicConfig(level=logging.INFO)
 
 # --- Constantes ---
 ASSETS_DIR = "assets"
-DATA_FILE = "data/dados_treino.json"
 BACKUP_DIR = "data/backups/"
 
 # Caminhos das imagens locais
@@ -80,81 +83,6 @@ class Authentication:
         except Exception as e:
             logging.error(f"Erro na autenticação: {str(e)}")
             return False
-
-class DataManager:
-    """Gerencia operações com dados"""
-    @staticmethod
-    def load_data() -> Dict:
-        try:
-            os.makedirs('data', exist_ok=True)
-            if not os.path.exists(DATA_FILE):
-                return DataManager._initialize_data()
-                
-            with open(DATA_FILE, 'r', encoding='utf-8') as f:
-                return json.load(f)
-        except Exception as e:
-            logging.error(f"Erro ao carregar dados: {str(e)}")
-            return DataManager._initialize_data()
-    
-    @staticmethod
-    def _initialize_data() -> Dict:
-        return {
-            'treinos': {},
-            'jogos': [],
-            'jogadores': [{
-                "nome": "Exemplo Jogador",
-                "login": "exemplo",
-                "posicao": "Meio-Campo",
-                "nr_camisola": 10,
-                "idade": 25,
-                "altura": 1.80,
-                "peso": 75,
-                "ultimo_clube": "Clube Anterior",
-                "telefone": "912345678",
-                "email": "jogador@exemplo.com",
-                "pontos_fortes": ["Finalização", "Visão de Jogo"],
-                "senha_hash": bcrypt.hashpw("senha".encode(), bcrypt.gensalt()).decode(),
-                "foto": None
-            }],
-            'taticas': [],
-            'exercicios': {
-                "Técnica": {"Domínio de bola": 20, "Passe curto": 15, "Finalização": 30},
-                "Física": {"Velocidade": 25, "Resistência": 40, "Força": 30},
-                "Tática": {"Posicionamento": 35, "Transição": 25, "Marcação": 20}
-            }
-        }
-    
-    @staticmethod
-    def save_data(data: Dict) -> bool:
-        try:
-            temp_path = DATA_FILE + '.tmp'
-            with open(temp_path, 'w', encoding='utf-8') as f:
-                json.dump(data, f, ensure_ascii=False, indent=4)
-            
-            if os.path.exists(DATA_FILE):
-                os.remove(DATA_FILE)
-            
-            os.rename(temp_path, DATA_FILE)
-            return True
-        except Exception as e:
-            logging.error(f"Erro ao salvar dados: {str(e)}")
-            return False
-
-    @staticmethod
-    def create_backup() -> str:
-        try:
-            os.makedirs(BACKUP_DIR, exist_ok=True)
-            timestamp = datetime.now().strftime('%Y%m%d_%H%M%S')
-            backup_file = f"{BACKUP_DIR}backup_{timestamp}.json"
-            
-            data = DataManager.load_data()
-            with open(backup_file, 'w') as f:
-                json.dump(data, f)
-            
-            return backup_file
-        except Exception as e:
-            logging.error(f"Erro ao criar backup: {str(e)}")
-            return ""
 
 class PDFGenerator:
     """Gera PDFs profissionais para planos de treino"""
@@ -298,6 +226,8 @@ class EmailSender:
             logging.error(f"Erro no envio de e-mail: {str(e)}")
             return False
 
+# [Restante do código permanece exatamente igual...]
+
 # --- Componentes da Interface ---
 class UIComponents:
     """Componentes reutilizáveis da interface"""
@@ -377,8 +307,8 @@ class UIComponents:
                 with cols[0]:
                     nome = st.text_input("Nome Completo*", value=dados['nome'])
                     login = st.text_input("Login* (sem espaços)", value=dados['login'], disabled=modo_edicao)
-                    posicao = st.selectbox("Posição*", ["Guarda-Redes", "Defesa", "Meio-Campo", "Ataque"],
-                                         index=["Guarda-Redes", "Defesa", "Meio-Campo", "Ataque"].index(dados['posicao']))
+                    posicao = st.selectbox("Posição*", ["Goleiro", "Defesa", "Meio-Campo", "Ataque"],
+                                         index=["Goleiro", "Defesa", "Meio-Campo", "Ataque"].index(dados['posicao']))
                     numero = st.number_input("Nº Camisola", value=dados['nr_camisola'], min_value=1, max_value=99)
                     altura = st.number_input("Altura (m)*", value=dados['altura'], min_value=1.50, max_value=2.20, step=0.01)
                 
@@ -1035,20 +965,18 @@ def pagina_relatorios():
         st.write("Em desenvolvimento...")
 
 def pagina_configuracoes():
-    """Página de configurações do sistema"""
-    if st.session_state.get('tipo_usuario') != 'treinador':
-        st.warning("Apenas treinadores podem acessar esta página")
-        return
-        
     st.title("⚙️ Configurações do Sistema")
     
-    st.subheader("Backup de Dados")
+    st.subheader("Backup no Dropbox")
     if st.button("🔄 Criar Backup Agora"):
-        backup_file = DataManager.create_backup()
-        if backup_file:
-            st.success(f"Backup criado com sucesso: {backup_file}")
-        else:
-            st.error("Erro ao criar backup")
+        with st.spinner("Enviando para Dropbox..."):
+            backup_url = DataManager.create_backup()
+            if backup_url:
+                st.success("✅ Backup criado com sucesso!")
+                st.markdown(f"[Acessar Backup no Dropbox]({backup_url})")
+                st.code(backup_url)
+            else:
+                st.error("Falha ao criar backup")
     
     st.subheader("Restaurar Backup")
     backups = []
