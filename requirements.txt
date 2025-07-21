@@ -6,3 +6,4 @@ pyopenssl==23.3.0
 setuptools==68.2.0
 pillow==11.3.0
 dropbox
+psutil>=5.8.0
