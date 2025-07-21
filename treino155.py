@@ -3,6 +3,7 @@ import json
 import bcrypt
 import logging
 import smtplib
+import uuid
 from datetime import datetime, date
 from io import BytesIO
 from typing import Dict, List, Optional
@@ -224,8 +225,6 @@ class EmailSender:
             logging.error(f"Erro no envio de e-mail: {str(e)}")
             return False
 
-# [Restante do código permanece exatamente igual...]
-
 # --- Componentes da Interface ---
 class UIComponents:
     """Componentes reutilizáveis da interface"""
@@ -259,20 +258,20 @@ class UIComponents:
             if not read_only and st.session_state.get('tipo_usuario') == 'treinador':
                 bcol1, bcol2 = st.columns(2)
                 with bcol1:
-                    if st.button("✏️ Editar", key=f"edit_{jogador['nome']}"):
+                    if st.button("✏️ Editar", key=f"edit_{jogador.get('id', hash(jogador['nome']))}"):
                         st.session_state['edit_player'] = jogador
                         st.rerun()
                 with bcol2:
-                    if st.button("❌ Remover", key=f"del_{jogador['nome']}"):
+                    if st.button("❌ Remover", key=f"del_{jogador.get('id', hash(jogador['nome']))}"):
                         st.session_state['delete_player'] = jogador
-
     
     @staticmethod
-    def formulario_jogador(jogador_data=None):  # Renomeei para jogador_data para evitar confusão
+    def formulario_jogador(jogador_data=None):
         """Formulário para adicionar/editar jogador"""
         try:
             # Dados padrão
             dados = {
+                'id': str(uuid.uuid4()),
                 'nome': '',
                 'login': '',
                 'posicao': 'Meio-Campo',
@@ -346,6 +345,7 @@ class UIComponents:
                     else:
                         try:
                             novo_jogador = {
+                                "id": dados['id'],  # Mantém o ID existente ou usa o novo
                                 "nome": nome,
                                 "login": login.lower().strip(),
                                 "posicao": posicao,
@@ -371,7 +371,7 @@ class UIComponents:
                             data = DataManager.load_data()
                             if modo_edicao:
                                 for i, j in enumerate(data['jogadores']):
-                                    if j.get('login') == dados.get('login'):
+                                    if j.get('id') == dados.get('id'):
                                         data['jogadores'][i] = novo_jogador
                                         break
                             else:
@@ -389,6 +389,7 @@ class UIComponents:
 
         except Exception as e:
             st.error(f"Erro inesperado no formulário: {str(e)}")
+
 # --- Páginas da Aplicação ---
 def pagina_login():
     """Página de login"""
@@ -489,7 +490,7 @@ def pagina_jogadores():
     
     # Adicionar novo jogador
     with st.expander("➕ Adicionar Novo Jogador", expanded=False):
-        UIComponents.formulario_jogador()  # Sem parâmetro para novo jogador
+        UIComponents.formulario_jogador()
     
     # Lista de jogadores
     st.subheader(f"🏃‍♂️ Elenco ({len(filtered_players)} jogadores)")
@@ -502,7 +503,7 @@ def pagina_jogadores():
     
     # Edição de jogador
     if 'edit_player' in st.session_state:
-        UIComponents.formulario_jogador(jogador_data=st.session_state['edit_player'])  # Com parâmetro para edição
+        UIComponents.formulario_jogador(jogador_data=st.session_state['edit_player'])
     
     # Confirmação de exclusão
     if 'delete_player' in st.session_state:
@@ -515,7 +516,7 @@ def pagina_jogadores():
                 try:
                     data = DataManager.load_data()
                     data['jogadores'] = [j for j in data['jogadores'] 
-                                      if j.get('login') != jogador.get('login')]
+                                      if j.get('id') != jogador.get('id')]
                     
                     if DataManager.save_data(data):
                         # Remover foto se existir
@@ -802,6 +803,7 @@ C. Finalização (2x2+GR)
             except Exception as e:
                 st.error(f"Erro ao gerar PDF: {str(e)}")
                 st.error("Verifique se todos os campos foram preenchidos corretamente.")
+
 def pagina_jogos():
     """Página de gestão de jogos"""
     if st.session_state.get('tipo_usuario') != 'treinador':
@@ -967,37 +969,43 @@ def pagina_configuracoes():
     
     st.subheader("Backup no Dropbox")
     if st.button("🔄 Criar Backup Agora"):
-        with st.spinner("Enviando para Dropbox..."):
-            backup_url = DataManager.create_backup()
-            if backup_url:
-                st.success("✅ Backup criado com sucesso!")
-                st.markdown(f"[Acessar Backup no Dropbox]({backup_url})")
-                st.code(backup_url)
+        with st.spinner("Criando backup seguro..."):
+            if DataManager.create_secure_backup():
+                st.success("✅ Backup criado e verificado com sucesso!")
             else:
-                st.error("Falha ao criar backup")
+                st.error("Falha ao criar backup verificado")
     
     st.subheader("Restaurar Backup")
     backups = []
-    if os.path.exists(BACKUP_DIR):
-        backups = sorted([f for f in os.listdir(BACKUP_DIR) if f.startswith('backup_')], reverse=True)
+    backup_dir = "backups"
+    
+    if os.path.exists(backup_dir):
+        backups = sorted(
+            [f for f in os.listdir(backup_dir) if f.startswith('backup_')],
+            reverse=True
+        )
     
     if backups:
         backup_selecionado = st.selectbox("Selecione um backup", backups)
         
         if st.button("🔄 Restaurar Backup Selecionado"):
             try:
-                with open(os.path.join(BACKUP_DIR, backup_selecionado), 'r') as f:
+                with open(os.path.join(backup_dir, backup_selecionado), 'r') as f:
                     data = json.load(f)
                 
-                if DataManager.save_data(data):
-                    st.success("Backup restaurado com sucesso!")
-                    st.rerun()
+                # Verifica integridade antes de restaurar
+                if not isinstance(data, dict) or 'jogadores' not in data:
+                    st.error("Backup corrompido - estrutura inválida")
                 else:
-                    st.error("Erro ao restaurar backup")
+                    if DataManager.save_data(data):
+                        st.success("Backup restaurado com sucesso!")
+                        st.rerun()
+                    else:
+                        st.error("Erro ao salvar dados restaurados")
             except Exception as e:
                 st.error(f"Erro ao restaurar backup: {str(e)}")
     else:
-        st.warning("Nenhum backup disponível")
+        st.warning("Nenhum backup local disponível")
 
 # --- Aplicação Principal ---
 def main():
@@ -1012,6 +1020,9 @@ def main():
     data = DataManager.load_data()
     needs_save = False
     for jogador in data['jogadores']:
+        if 'id' not in jogador:
+            jogador['id'] = str(uuid.uuid4())
+            needs_save = True
         if 'login' not in jogador:
             jogador['login'] = jogador['nome'].lower().replace(' ', '_')
             needs_save = True
