@@ -14,8 +14,10 @@ from fpdf import FPDF, HTMLMixin
 from dotenv import load_dotenv
 from email.mime.text import MIMEText
 from email.mime.multipart import MIMEMultipart
-
 from data_manager import DataManager
+import dropbox
+from dropbox import Dropbox
+from dropbox.exceptions import AuthError, ApiError, HttpError
 
 # --- Configurações Iniciais ---
 load_dotenv()
@@ -230,7 +232,7 @@ class UIComponents:
     """Componentes reutilizáveis da interface"""
     
     @staticmethod
-    def mostrar_card_jogador(jogador: Dict, read_only: bool = False):
+    def mostrar_card_jogador(jogador: Dict, read_only: bool = False, hide_contacts: bool = False):
         col1, col2 = st.columns([1, 3])
         
         with col1:
@@ -246,8 +248,11 @@ class UIComponents:
             st.write(f"**Altura:** {jogador.get('altura', 'N/A')}m")
             st.write(f"**Peso:** {jogador.get('peso', 'N/A')}kg")
             st.write(f"**Último Clube:** {jogador.get('ultimo_clube', 'N/A')}")
-            st.write(f"**Telefone:** {jogador.get('telefone', '--')}")
-            st.write(f"**E-mail:** {jogador.get('email', '--')}")
+            
+            # Esconde contatos se hide_contacts=True
+            if not hide_contacts:
+                st.write(f"**Telefone:** {jogador.get('telefone', '--')}")
+                st.write(f"**E-mail:** {jogador.get('email', '--')}")
             
             if jogador.get('pontos_fortes'):
                 st.write("**Pontos Fortes:**")
@@ -255,16 +260,18 @@ class UIComponents:
                 for i, pf in enumerate(jogador['pontos_fortes']):
                     cols[i%3].success(f"✓ {pf}")
             
+            # Botões só para treinador
             if not read_only and st.session_state.get('tipo_usuario') == 'treinador':
                 bcol1, bcol2 = st.columns(2)
                 with bcol1:
-                    if st.button("✏️ Editar", key=f"edit_{jogador.get('id', hash(jogador['nome']))}"):
-                        st.session_state['edit_player'] = jogador
+                    if st.button("✏️ Editar", key=f"edit_{jogador['id']}"):
+                        st.session_state['edit_player'] = jogador.copy()
                         st.rerun()
                 with bcol2:
-                    if st.button("❌ Remover", key=f"del_{jogador.get('id', hash(jogador['nome']))}"):
-                        st.session_state['delete_player'] = jogador
-    
+                    if st.button("❌ Remover", key=f"del_{jogador['id']}"):
+                        st.session_state['delete_player'] = jogador.copy()
+                        st.rerun()
+
     @staticmethod
     def formulario_jogador(jogador_data=None):
         """Formulário para adicionar/editar jogador"""
@@ -286,6 +293,7 @@ class UIComponents:
                 'foto': None,
                 'senha_hash': None
             }
+
 
             # Se receber dados do jogador, atualiza os valores padrão
             if jogador_data:
@@ -390,6 +398,35 @@ class UIComponents:
         except Exception as e:
             st.error(f"Erro inesperado no formulário: {str(e)}")
 
+# --- Funções Auxiliares ---
+def mostrar_uso_recursos():
+    """Mostra estatísticas de uso de recursos na barra lateral"""
+    data = DataManager.load_data()
+    st.sidebar.subheader("📊 Estatísticas")
+    
+    col1, col2 = st.sidebar.columns(2)
+    col1.metric("Jogadores", len(data['jogadores']))
+    col2.metric("Treinos", len(data['treinos']))
+    
+    if 'jogos' in data:
+        st.sidebar.metric("Jogos", len(data['jogos']))
+
+def resetar_senha_jogador(login_jogador, nova_senha):
+    """Reseta a senha de um jogador"""
+    try:
+        data = DataManager.load_data()
+        auth = Authentication()
+        
+        for jogador in data['jogadores']:
+            if jogador.get('login') == login_jogador:
+                jogador['senha_hash'] = auth.hash_password(nova_senha)
+                if DataManager.save_data(data):
+                    return True
+        return False
+    except Exception as e:
+        logging.error(f"Erro ao resetar senha: {str(e)}")
+        return False
+
 # --- Páginas da Aplicação ---
 def pagina_login():
     """Página de login"""
@@ -459,13 +496,11 @@ def pagina_dashboard():
 
 def pagina_jogadores():
     """Página de gestão de jogadores"""
-    if st.session_state.get('tipo_usuario') != 'treinador':
-        pagina_perfil_jogador()
-        return
-        
-    st.title("👥 Gestão de Jogadores")
+    st.title("👥 Lista de Jogadores")
     data = DataManager.load_data()
-    
+
+    is_treinador = st.session_state.get('tipo_usuario') == 'treinador'
+
     # Filtros
     col1, col2, col3 = st.columns(3)
     with col1:
@@ -475,86 +510,65 @@ def pagina_jogadores():
         search_term = st.text_input("Buscar por nome")
     with col3:
         items_per_page = st.selectbox("Jogadores por página", [5, 10, 20], index=1)
-    
+
     # Aplicar filtros
     filtered_players = data['jogadores']
     if pos_filter != "Todos":
         filtered_players = [j for j in filtered_players if j['posicao'] == pos_filter]
     if search_term:
         filtered_players = [j for j in filtered_players if search_term.lower() in j['nome'].lower()]
-    
+
     # Paginação
     total_pages = max(1, (len(filtered_players) // items_per_page + 1))
     page = st.number_input("Página", min_value=1, max_value=total_pages, value=1)
     paginated_players = filtered_players[(page-1)*items_per_page : page*items_per_page]
-    
-    # Adicionar novo jogador
-    with st.expander("➕ Adicionar Novo Jogador", expanded=False):
-        UIComponents.formulario_jogador()
-    
+
+    # Adicionar novo jogador (apenas treinador)
+    if is_treinador:
+        with st.expander("➕ Adicionar Novo Jogador", expanded=False):
+            UIComponents.formulario_jogador()
+
     # Lista de jogadores
     st.subheader(f"🏃‍♂️ Elenco ({len(filtered_players)} jogadores)")
-    
+
     if not paginated_players:
         st.warning("Nenhum jogador encontrado com os filtros atuais")
     else:
         for jogador in paginated_players:
-            UIComponents.mostrar_card_jogador(jogador, read_only=False)
-    
-    # Edição de jogador
-    if 'edit_player' in st.session_state:
-        UIComponents.formulario_jogador(jogador_data=st.session_state['edit_player'])
-    
-    # Confirmação de exclusão
-    if 'delete_player' in st.session_state:
-        jogador = st.session_state['delete_player']
-        st.warning(f"Tem certeza que deseja remover {jogador['nome']} permanentemente?")
-        
-        col1, col2 = st.columns(2)
-        with col1:
-            if st.button("✅ Confirmar"):
-                try:
-                    data = DataManager.load_data()
-                    data['jogadores'] = [j for j in data['jogadores'] 
-                                      if j.get('id') != jogador.get('id')]
-                    
-                    if DataManager.save_data(data):
-                        # Remover foto se existir
-                        if jogador.get('foto') and os.path.exists(jogador['foto']):
-                            try:
+            UIComponents.mostrar_card_jogador(jogador, read_only=not is_treinador, hide_contacts=not is_treinador)
+
+    # Edição e exclusão (apenas treinador)
+    if is_treinador:
+        if 'edit_player' in st.session_state:
+            st.write("")  # Espaçamento
+            with st.expander(f"✏️ Editando {st.session_state['edit_player']['nome']}", expanded=True):
+                UIComponents.formulario_jogador(jogador_data=st.session_state['edit_player'])
+
+        if 'delete_player' in st.session_state:
+            jogador = st.session_state['delete_player']
+            st.warning(f"Tem certeza que deseja remover {jogador['nome']} permanentemente?")
+            col1, col2 = st.columns(2)
+            with col1:
+                if st.button("✅ Confirmar", key="confirm_delete"):
+                    try:
+                        data = DataManager.load_data()
+                        data['jogadores'] = [j for j in data['jogadores'] if j['id'] != jogador['id']]
+                        if DataManager.save_data(data):
+                            if jogador.get('foto') and os.path.exists(jogador['foto']):
                                 os.remove(jogador['foto'])
-                            except Exception as e:
-                                logging.error(f"Erro ao remover foto: {str(e)}")
-                        
-                        st.success(f"Jogador {jogador['nome']} removido com sucesso!")
-                        time.sleep(1)
-                        del st.session_state['delete_player']
-                        st.rerun()
-                    else:
-                        st.error("Erro ao salvar dados")
-                except Exception as e:
-                    st.error(f"Erro ao remover jogador: {str(e)}")
-        
-        with col2:
-            if st.button("❌ Cancelar"):
-                del st.session_state['delete_player']
-                st.rerun()
-
-def resetar_senha_jogador(login_jogador, nova_senha):
-    try:
-        data = DataManager.load_data()
-        auth = Authentication()
-        
-        for jogador in data['jogadores']:
-            if jogador.get('login') == login_jogador:
-                jogador['senha_hash'] = auth.hash_password(nova_senha)
-                if DataManager.save_data(data):
-                    return True
-        return False
-    except Exception as e:
-        logging.error(f"Erro ao resetar senha: {str(e)}")
-        return False
-
+                            st.success(f"Jogador {jogador['nome']} removido com sucesso!")
+                            time.sleep(1)
+                            del st.session_state['delete_player']
+                            st.rerun()
+                        else:
+                            st.error("Erro ao salvar dados")
+                    except Exception as e:
+                        st.error(f"Erro ao remover jogador: {str(e)}")
+            with col2:
+                if st.button("❌ Cancelar", key="cancel_delete"):
+                    del st.session_state['delete_player']
+                    st.rerun()
+                
 def pagina_perfil_jogador():
     """Página de visualização do perfil do jogador"""
     st.title("👤 Meu Perfil")
@@ -965,88 +979,104 @@ def pagina_relatorios():
         st.write("Em desenvolvimento...")
 
 def pagina_configuracoes():
+    """Página de configurações do sistema"""
     st.title("⚙️ Configurações do Sistema")
     
-    st.subheader("Backup no Dropbox")
-    if st.button("🔄 Criar Backup Agora"):
-        with st.spinner("Criando backup seguro..."):
-            if DataManager.create_secure_backup():
-                st.success("✅ Backup criado e verificado com sucesso!")
-            else:
-                st.error("Falha ao criar backup verificado")
+    # Seção de status
+    st.subheader("Status do Dropbox")
+    dropbox_token = os.getenv('DROPBOX_ACCESS_TOKEN')
     
-    st.subheader("Restaurar Backup")
-    backups = []
-    backup_dir = "backups"
-    
-    if os.path.exists(backup_dir):
-        backups = sorted(
-            [f for f in os.listdir(backup_dir) if f.startswith('backup_')],
-            reverse=True
-        )
-    
-    if backups:
-        backup_selecionado = st.selectbox("Selecione um backup", backups)
-        
-        if st.button("🔄 Restaurar Backup Selecionado"):
-            try:
-                with open(os.path.join(backup_dir, backup_selecionado), 'r') as f:
-                    data = json.load(f)
-                
-                # Verifica integridade antes de restaurar
-                if not isinstance(data, dict) or 'jogadores' not in data:
-                    st.error("Backup corrompido - estrutura inválida")
-                else:
-                    if DataManager.save_data(data):
-                        st.success("Backup restaurado com sucesso!")
-                        st.rerun()
-                    else:
-                        st.error("Erro ao salvar dados restaurados")
-            except Exception as e:
-                st.error(f"Erro ao restaurar backup: {str(e)}")
+    if not dropbox_token:
+        st.error("❌ Token do Dropbox não configurado")
     else:
-        st.warning("Nenhum backup local disponível")
+        try:
+            dbx = dropbox.Dropbox(dropbox_token)
+            account = dbx.users_get_current_account()
+            st.success(f"✅ Conectado ao Dropbox como: {account.name.display_name}")
+        except AuthError:
+            st.error("❌ Token do Dropbox expirado ou inválido")
+        except Exception as e:
+            st.error(f"⚠️ Erro na conexão: {str(e)}")
+    
+    # Botão de backup
+    if st.button("🔄 Criar Backup Agora"):
+        with st.spinner("Criando backup..."):
+            success = DataManager.create_secure_backup()
+            
+            if success:
+                if dropbox_token:
+                    try:
+                        dbx = dropbox.Dropbox(dropbox_token)
+                        dbx.users_get_current_account()
+                        st.success("✅ Backup completo (local + Dropbox)")
+                    except AuthError:
+                        st.warning("⚠️ Backup local criado, mas falha no Dropbox (token expirado)")
+                    except Exception as e:
+                        st.warning(f"⚠️ Backup local criado, mas erro no Dropbox: {str(e)}")
+                else:
+                    st.success("✅ Backup local criado")
+                
+                if os.path.exists('backups'):
+                    backups = sorted([f for f in os.listdir('backups') if f.startswith('backup_')], reverse=True)
+                    st.write("Últimos backups locais:")
+                    for b in backups[:3]:
+                        st.code(f"{b} ({os.path.getsize(f'backups/{b}')} bytes)")
+            else:
+                st.error("❌ Falha ao criar backup")
 
-# --- Aplicação Principal ---
+def get_menu_options(user_type):
+    """Retorna os menus baseados no tipo de usuário"""
+    return {
+        "treinador": {
+            "🏠 Dashboard": pagina_dashboard,
+            "👥 Jogadores": pagina_jogadores,
+            "📅 Treinos": pagina_treinos,
+            "📋 Plano de Treino": pagina_plano_treino,
+            "⚽ Jogos": pagina_jogos,
+            "📐 Táticas": pagina_taticas,
+            "📊 Relatórios": pagina_relatorios,
+            "⚙️ Configurações": pagina_configuracoes
+        },
+        "jogador": {
+            "🏠 Meu Perfil": pagina_perfil_jogador,
+            "👥 Jogadores": pagina_jogadores  # <-- Adicione esta linha
+        }
+    }.get(user_type, {"🏠 Meu Perfil": pagina_perfil_jogador})
+
 def main():
     """Função principal da aplicação"""
+    # Verificação de ambiente
+    if os.path.exists('secrets.toml'):
+        st.sidebar.info("✅ Modo local detectado")
+    else:
+        st.sidebar.warning("🌐 Executando no Streamlit Cloud")
+    
     # Verificar e inicializar dados
     if not os.path.exists(ASSETS_DIR):
         os.makedirs(ASSETS_DIR)
     
     auth = Authentication()
     
-    # Inicializar dados se necessário
+    # Inicializar dados
     data = DataManager.load_data()
     needs_save = False
     for jogador in data['jogadores']:
         if 'id' not in jogador:
             jogador['id'] = str(uuid.uuid4())
             needs_save = True
-        if 'login' not in jogador:
-            jogador['login'] = jogador['nome'].lower().replace(' ', '_')
-            needs_save = True
-        if 'senha_hash' not in jogador:
-            jogador['senha_hash'] = auth.hash_password(f"jogador_{jogador['login']}")
-            needs_save = True
-        if 'altura' not in jogador:
-            jogador['altura'] = 1.75
-            needs_save = True
-        if 'peso' not in jogador:
-            jogador['peso'] = 70
-            needs_save = True
-        if 'ultimo_clube' not in jogador:
-            jogador['ultimo_clube'] = 'Desconhecido'
-            needs_save = True
-    
+
     if needs_save:
         DataManager.save_data(data)
     
-    # Página de login se não autenticado
+    # Verificação de autenticação
     if not st.session_state.get('autenticado'):
         pagina_login()
         return
-    
+
+    # Obter menus
+    user_type = st.session_state.get('tipo_usuario', 'jogador')
+    menu_options = get_menu_options(user_type)
+
     # Barra lateral
     with st.sidebar:
         if os.path.exists(IMAGE_PATHS['logo']):
@@ -1054,33 +1084,23 @@ def main():
         else:
             st.title("App do Treinador")
         
-        st.write(f"Olá, **{st.session_state.get('user', 'Treinador')}**")
-        
-        # Menu baseado no tipo de usuário
-        if st.session_state.get('tipo_usuario') == 'treinador':
-            menu_options = {
-                "🏠 Dashboard": pagina_dashboard,
-                "👥 Jogadores": pagina_jogadores,
-                "📅 Treinos": pagina_treinos,
-                "📋 Plano de Treino": pagina_plano_treino,
-                "⚽ Jogos": pagina_jogos,
-                "📐 Táticas": pagina_taticas,
-                "📊 Relatórios": pagina_relatorios,
-                "⚙️ Configurações": pagina_configuracoes
-            }
-        else:
-            menu_options = {
-                "🏠 Meu Perfil": pagina_perfil_jogador
-            }
-        
+        st.write(f"Olá, **{st.session_state.get('user', 'Usuário')}**")
+
         selected = st.radio("Menu", list(menu_options.keys()))
-        
+
+        if user_type == 'treinador':
+            mostrar_uso_recursos()
+
         if st.button("🚪 Sair"):
             st.session_state.clear()
             st.rerun()
-    
-    # Mostrar página selecionada
-    menu_options[selected]()
+
+    # Exibir página selecionada
+    if selected in menu_options:
+        menu_options[selected]()
+    else:
+        st.error("Página não encontrada")
+        pagina_dashboard()  # Fallback
 
 if __name__ == "__main__":
     main()
