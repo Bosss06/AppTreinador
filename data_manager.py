@@ -1,13 +1,17 @@
 import os
 import json
 import logging
+import uuid
 from datetime import datetime
 import dropbox
 from dropbox.exceptions import AuthError, ApiError, HttpError
-import uuid
 
 logger = logging.getLogger(__name__)
 logger.setLevel(logging.INFO)
+
+# Constantes
+DATA_FILE = "data/dados_treino.json"
+BACKUP_DIR = "data/backups/"
 
 class DataManager:
     @staticmethod
@@ -24,7 +28,6 @@ class DataManager:
     @staticmethod
     def load_data() -> dict:
         """Carrega dados com verificação de integridade"""
-        DATA_FILE = "data/dados_treino.json"
         DEFAULT_DATA = DataManager._initialize_data()
         
         try:
@@ -62,7 +65,6 @@ class DataManager:
     @staticmethod
     def save_data(data: dict) -> bool:
         """Salva os dados no arquivo JSON"""
-        DATA_FILE = "data/dados_treino.json"
         try:
             with open(DATA_FILE, 'w', encoding='utf-8') as f:
                 json.dump(data, f, ensure_ascii=False, indent=4)
@@ -73,56 +75,56 @@ class DataManager:
 
     @staticmethod
     def create_secure_backup() -> bool:
-        """Cria backup com verificação de integridade"""
+        """Cria um backup seguro dos dados"""
         try:
+            os.makedirs(BACKUP_DIR, exist_ok=True)
+            timestamp = datetime.now().strftime("%Y%m%d_%H%M%S")
+            backup_file = os.path.join(BACKUP_DIR, f"backup_{timestamp}.json")
+            
+            # Carrega e salva com validação
             data = DataManager.load_data()
-            
-            # Verifica se os dados são válidos
-            if not isinstance(data, dict) or 'jogadores' not in data:
-                raise ValueError("Estrutura de dados inválida para backup")
-            
-            # Cria backup local
-            os.makedirs("backups", exist_ok=True)
-            timestamp = datetime.now().strftime('%Y%m%d_%H%M%S')
-            backup_file = f"backups/backup_{timestamp}.json"
-            
             with open(backup_file, 'w', encoding='utf-8') as f:
                 json.dump(data, f, ensure_ascii=False, indent=4)
             
-            # Verifica se o backup foi criado corretamente
-            with open(backup_file, 'r', encoding='utf-8') as f:
-                backup_data = json.load(f)
-                if backup_data.get('jogadores') is None:
-                    raise ValueError("Backup corrompido")
-            
-            # Upload para Dropbox (se configurado)
-            dropbox_token = os.getenv('DROPBOX_ACCESS_TOKEN')
-            if dropbox_token:
-                try:
-                    dbx = dropbox.Dropbox(dropbox_token)
-                    
-                    # Verifica conexão com Dropbox
-                    dbx.users_get_current_account()
-                    
-                    with open(backup_file, 'rb') as f:
-                        dbx.files_upload(
-                            f.read(),
-                            f"/backup_app_treinador/{os.path.basename(backup_file)}",
-                            mode=dropbox.files.WriteMode.overwrite
-                        )
-                    
-                    logger.info("Backup enviado para Dropbox com sucesso")
-                except Exception as e:
-                    logger.error(f"Erro ao enviar para Dropbox: {str(e)}")
-                    # Continua mesmo com falha no Dropbox
-            
             return True
         except Exception as e:
-            logger.error(f"Falha no backup seguro: {str(e)}")
+            logger.error(f"Erro ao criar backup: {str(e)}")
             return False
 
     @staticmethod
-    def create_backup() -> str:
-        """Mantido para compatibilidade (usa o novo método)"""
-        success = DataManager.create_secure_backup()
-        return "Backup criado com sucesso" if success else ""
+    def restore_backup(backup_file: str) -> bool:
+        """Restaura dados a partir de um backup"""
+        try:
+            # Verifica se o arquivo existe
+            if not os.path.exists(backup_file):
+                logger.error(f"Arquivo de backup não encontrado: {backup_file}")
+                return False
+                
+            # Cria backup antes de restaurar
+            DataManager.create_secure_backup()
+            
+            # Restaura os dados
+            with open(backup_file, 'r', encoding='utf-8') as f:
+                backup_data = json.load(f)
+            
+            return DataManager.save_data(backup_data)
+        except Exception as e:
+            logger.error(f"Erro ao restaurar backup: {str(e)}")
+            return False
+
+    @staticmethod
+    def list_backups() -> list:
+        """Lista todos os backups disponíveis"""
+        try:
+            if not os.path.exists(BACKUP_DIR):
+                return []
+                
+            backups = []
+            for f in os.listdir(BACKUP_DIR):
+                if f.startswith('backup_') and f.endswith('.json'):
+                    backups.append(f)
+                    
+            return sorted(backups, reverse=True)
+        except Exception as e:
+            logger.error(f"Erro ao listar backups: {str(e)}")
+            return []
