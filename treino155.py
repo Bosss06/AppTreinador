@@ -672,6 +672,47 @@ def pagina_treinos():
                 st.write("**Exercícios:**")
                 for exercicio in detalhes['exercicios']:
                     st.write(f"- {exercicio}")
+                col1, col2 = st.columns(2)
+                with col1:
+                    if st.button("✏️ Editar", key=f"edit_treino_{data_treino}"):
+                        st.session_state['edit_treino'] = (data_treino, detalhes)
+                        st.rerun()
+                with col2:
+                    if st.button("🗑️ Eliminar", key=f"del_treino_{data_treino}"):
+                        data['treinos'].pop(data_treino)
+                        DataManager.save_data(data)
+                        st.success("Treino eliminado!")
+                        st.rerun()
+                        # Formulário de edição (fora do loop)
+        if 'edit_treino' in st.session_state:
+            data_treino, detalhes = st.session_state['edit_treino']
+            with st.form(key="form_edit_treino"):
+                st.subheader(f"Editar Treino: {data_treino}")
+                hora = st.time_input("Hora", value=datetime.strptime(detalhes['hora'], "%H:%M").time())
+                local = st.text_input("Local", value=detalhes['local'])
+                objetivo = st.text_input("Objetivo", value=detalhes['objetivo'])
+                duracao = st.number_input("Duração (minutos)", value=detalhes['duracao'], min_value=30, max_value=180)
+                exercicios = st.multiselect("Exercícios", detalhes['exercicios'], default=detalhes['exercicios'])
+                participantes = st.multiselect("Participantes", [j['nome'] for j in data['jogadores']], default=detalhes['participantes'])
+                col1, col2 = st.columns(2)
+                with col1:
+                    if st.form_submit_button("💾 Salvar Alterações"):
+                        data['treinos'][data_treino] = {
+                            'hora': hora.strftime('%H:%M'),
+                            'local': local,
+                            'objetivo': objetivo,
+                            'duracao': duracao,
+                            'exercicios': exercicios,
+                            'participantes': participantes
+                        }
+                        DataManager.save_data(data)
+                        del st.session_state['edit_treino']
+                        st.success("Treino editado com sucesso!")
+                        st.rerun()
+                with col2:
+                    if st.form_submit_button("❌ Cancelar"):
+                        del st.session_state['edit_treino']
+                        st.rerun()
 
     # Notificar jogadores
     st.subheader("📧 Notificar Jogadores sobre Treino")
@@ -827,6 +868,7 @@ def pagina_jogos():
     st.title("⚽ Gestão de Jogos")
     data = DataManager.load_data()
     
+    
     # Agendar novo jogo
     with st.expander("➕ Agendar Novo Jogo", expanded=False):
         with st.form(key="form_novo_jogo", clear_on_submit=True):
@@ -869,7 +911,47 @@ def pagina_jogos():
                 st.write(f"**Convocados:** {', '.join(jogo['convocados'])}")
                 if jogo.get('resultado'):
                     st.write(f"**Resultado:** {jogo['resultado']}")
-
+                col1, col2 = st.columns(2)
+                with col1:
+                    if st.button("✏️ Editar", key=f"edit_jogo_{jogo['data']}_{jogo['adversario']}"):
+                        st.session_state['edit_jogo'] = jogo
+                        st.rerun()
+                with col2:
+                    if st.button("🗑️ Eliminar", key=f"del_jogo_{jogo['data']}_{jogo['adversario']}"):
+                        data['jogos'].remove(jogo)
+                        DataManager.save_data(data)
+                        st.success("Jogo eliminado!")
+                        st.rerun()
+                        
+                if 'edit_jogo' in st.session_state:
+                    jogo = st.session_state['edit_jogo']
+                    with st.form(key="form_edit_jogo"):
+                        st.subheader(f"Editar Jogo: {jogo['data']} vs {jogo['adversario']}")
+                        hora = st.time_input("Hora", value=datetime.strptime(jogo['hora'], "%H:%M").time())
+                        adversario = st.text_input("Adversário", value=jogo['adversario'])
+                        local = st.text_input("Local", value=jogo['local'])
+                        tipo = st.selectbox("Tipo de Jogo", ["Amistoso", "Campeonato", "Copa", "Treino"], index=["Amistoso", "Campeonato", "Copa", "Treino"].index(jogo['tipo']))
+                        convocados = st.multiselect("Convocados", [j['nome'] for j in data['jogadores']], default=jogo['convocados'])
+                        col1, col2 = st.columns(2)
+                        with col1:
+                            if st.form_submit_button("💾 Salvar Alterações"):
+                                jogo.update({
+                                    'hora': hora.strftime('%H:%M'),
+                                    'adversario': adversario,
+                                    'local': local,
+                                    'tipo': tipo,
+                                    'convocados': convocados
+                                })
+                                DataManager.save_data(data)
+                                del st.session_state['edit_jogo']
+                                st.success("Jogo editado com sucesso!")
+                                st.rerun()
+                        with col2:
+                            if st.form_submit_button("❌ Cancelar"):
+                                del st.session_state['edit_jogo']
+                                st.rerun()        
+           
+                        
 def pagina_taticas():
     """Página de editor tático"""
     if st.session_state.get('tipo_usuario') != 'treinador':
