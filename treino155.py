@@ -333,8 +333,26 @@ class UIComponents:
 
                 # Só mostra campo de senha para novo jogador
                 if not modo_edicao:
-                    senha = st.text_input("Senha Inicial*", type="password", 
-                                        value=f"jogador_{dados['login'].lower()}" if dados['login'] else "")
+                        senha = st.text_input("Senha*", type="password")
+                else:
+                        nova_senha = st.text_input("Nova Senha (opcional)", type="password")
+                        if nova_senha:
+                            if st.form_submit_button("🔑 Resetar Senha"):
+                                if resetar_senha_jogador(login, nova_senha):
+                                    st.success("Senha redefinida com sucesso!")
+                                    st.experimental_rerun()
+                            else:
+                                st.error("Erro ao redefinir senha.") 
+
+                # Botões de ação
+                col1, col2 = st.columns(2)
+                with col1:
+                    submitted = st.form_submit_button("💾 Salvar")
+                with col2:
+                    if st.form_submit_button("❌ Cancelar"):
+                        if 'edit_player' in st.session_state:
+                            del st.session_state['edit_player']
+                        st.rerun()
 
                 # Botões de ação
                 col1, col2 = st.columns(2)
