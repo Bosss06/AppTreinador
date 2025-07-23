@@ -933,37 +933,24 @@ def pagina_jogos():
                         st.rerun()
                         
     if 'edit_jogo' in st.session_state:
-    jogo = st.session_state['edit_jogo']
-    jogadores_disponiveis = [j['nome'] for j in data['jogadores']]
-    # Garante que só nomes válidos vão para o default
-    convocados_default = [nome for nome in jogo['convocados'] if nome in jogadores_disponiveis]
-    with st.form(key="form_edit_jogo"):
-        st.subheader(f"Editar Jogo: {jogo['data']} vs {jogo['adversario']}")
-        hora = st.time_input("Hora", value=datetime.strptime(jogo['hora'], "%H:%M").time())
-        adversario = st.text_input("Adversário", value=jogo['adversario'])
-        local = st.text_input("Local", value=jogo['local'])
-        tipo = st.selectbox("Tipo de Jogo", ["Amistoso", "Campeonato", "Copa", "Treino"], index=["Amistoso", "Campeonato", "Copa", "Treino"].index(jogo['tipo']))
-        convocados = st.multiselect("Convocados", jogadores_disponiveis, default=convocados_default)
-        col1, col2 = st.columns(2)
-        with col1:
-            if st.form_submit_button("💾 Salvar Alterações"):
-                updated = False
-                # Tenta atualizar pelo objeto
-                for idx, j in enumerate(data['jogos']):
-                    if j is jogo:
-                        data['jogos'][idx].update({
-                            'hora': hora.strftime('%H:%M'),
-                            'adversario': adversario,
-                            'local': local,
-                            'tipo': tipo,
-                            'convocados': convocados
-                        })
-                        updated = True
-                        break
-                # Se não encontrou pelo objeto, tenta pelo campo único
-                if not updated:
+        jogo = st.session_state['edit_jogo']
+        jogadores_disponiveis = [j['nome'] for j in data['jogadores']]
+        # Garante que só nomes válidos vão para o default
+        convocados_default = [nome for nome in jogo['convocados'] if nome in jogadores_disponiveis]
+        with st.form(key="form_edit_jogo"):
+            st.subheader(f"Editar Jogo: {jogo['data']} vs {jogo['adversario']}")
+            hora = st.time_input("Hora", value=datetime.strptime(jogo['hora'], "%H:%M").time())
+            adversario = st.text_input("Adversário", value=jogo['adversario'])
+            local = st.text_input("Local", value=jogo['local'])
+            tipo = st.selectbox("Tipo de Jogo", ["Amistoso", "Campeonato", "Copa", "Treino"], index=["Amistoso", "Campeonato", "Copa", "Treino"].index(jogo['tipo']))
+            convocados = st.multiselect("Convocados", jogadores_disponiveis, default=convocados_default)
+            col1, col2 = st.columns(2)
+            with col1:
+                if st.form_submit_button("💾 Salvar Alterações"):
+                    updated = False
+                    # Tenta atualizar pelo objeto
                     for idx, j in enumerate(data['jogos']):
-                        if j['data'] == jogo['data'] and j['adversario'] == jogo['adversario']:
+                        if j is jogo:
                             data['jogos'][idx].update({
                                 'hora': hora.strftime('%H:%M'),
                                 'adversario': adversario,
@@ -971,15 +958,28 @@ def pagina_jogos():
                                 'tipo': tipo,
                                 'convocados': convocados
                             })
+                            updated = True
                             break
-                DataManager.save_data(data)
-                del st.session_state['edit_jogo']
-                st.success("Jogo editado com sucesso!")
-                st.rerun()
-        with col2:
-            if st.form_submit_button("❌ Cancelar"):
-                del st.session_state['edit_jogo']
-                st.rerun()
+                    # Se não encontrou pelo objeto, tenta pelo campo único
+                    if not updated:
+                        for idx, j in enumerate(data['jogos']):
+                            if j['data'] == jogo['data'] and j['adversario'] == jogo['adversario']:
+                                data['jogos'][idx].update({
+                                    'hora': hora.strftime('%H:%M'),
+                                    'adversario': adversario,
+                                    'local': local,
+                                    'tipo': tipo,
+                                    'convocados': convocados
+                                })
+                                break
+                    DataManager.save_data(data)
+                    del st.session_state['edit_jogo']
+                    st.success("Jogo editado com sucesso!")
+                    st.rerun()
+            with col2:
+                if st.form_submit_button("❌ Cancelar"):
+                    del st.session_state['edit_jogo']
+                    st.rerun()
             
                         
 def pagina_taticas():
