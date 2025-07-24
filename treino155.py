@@ -41,29 +41,25 @@ IMAGE_PATHS = {
 class Authentication:
     """Gerencia autenticação de usuários"""
     def __init__(self):
-        if 'autenticado' not in st.session_state:
-            st.session_state.update({
-                'autenticado': False,
-                'tipo_usuario': None,
-                'user': None,
-                'jogador_info': None
-            })
+        pass
+         
     
     def hash_password(self, password: str) -> str:
         return bcrypt.hashpw(password.encode('utf-8'), bcrypt.gensalt()).decode('utf-8')
     
     def login(self, username: str, password: str) -> bool:
         try:
-            # Verifica admin
+        # Verifica admin
             admin_user = os.getenv('ADMIN_USER')
             admin_hash = os.getenv('ADMIN_PASSWORD_HASH')
-            
+        
             if username == admin_user and admin_hash:
                 if bcrypt.checkpw(password.encode('utf-8'), admin_hash.encode('utf-8')):
                     st.session_state.update({
                         'autenticado': True,
                         'tipo_usuario': 'treinador',
-                        'user': username
+                        'user': admin_user,
+                        'jogador_info': None
                     })
                     return True
 
@@ -75,7 +71,7 @@ class Authentication:
                     if bcrypt.checkpw(password.encode('utf-8'), jogador['senha_hash'].encode('utf-8')):
                         st.session_state.update({
                             'autenticado': True,
-                            'tipo_usuario': 'jogador',
+                            'tipo_usuario': jogador.get('tipo', 'jogador'),
                             'user': jogador['nome'],
                             'jogador_info': jogador
                         })
@@ -306,14 +302,22 @@ class UIComponents:
 
             with st.form(key=f"form_jogador_{'edit' if modo_edicao else 'new'}"):
                 st.subheader(titulo)
+                if st.session_state.get('tipo_usuario') == 'treinador':
+                    tipo_usuario = st.selectbox(
+                        "Tipo de Usuário",
+                        ["jogador", "treinador_adjunto"],
+                        index=0 if not modo_edicao or dados.get('tipo', 'jogador') == 'jogador' else 1
+                    )
+                else:
+                    tipo_usuario = dados.get('tipo', 'jogador')  
                 
                 # Layout do formulário
                 cols = st.columns(2)
                 with cols[0]:
                     nome = st.text_input("Nome Completo*", value=dados['nome'])
                     login = st.text_input("Login* (sem espaços)", value=dados['login'], disabled=modo_edicao)
-                    posicao = st.selectbox("Posição*", ["Goleiro", "Defesa", "Meio-Campo", "Ataque"],
-                                         index=["Goleiro", "Defesa", "Meio-Campo", "Ataque"].index(dados['posicao']))
+                    posicao = st.selectbox("Posição*", ["Guarda-Redes", "Defesa", "Meio-Campo", "Adjunto", "Ataque"],
+                                         index=["Guarda-Redes", "Defesa", "Meio-Campo", "Ataque"].index(dados['posicao']))
                     numero = st.number_input("Nº Camisola", value=dados['nr_camisola'], min_value=1, max_value=99)
                     altura = st.number_input("Altura (m)*", value=dados['altura'], min_value=1.50, max_value=2.20, step=0.01)
                 
@@ -363,6 +367,7 @@ class UIComponents:
                         try:
                             novo_jogador = {
                                 "id": dados['id'],  # Mantém o ID existente ou usa o novo
+                                "tipo": tipo_usuario,
                                 "nome": nome,
                                 "login": login.lower().strip(),
                                 "posicao": posicao,
@@ -976,10 +981,10 @@ def pagina_jogos():
                     del st.session_state['edit_jogo']
                     st.success("Jogo editado com sucesso!")
                     st.rerun()
-            with col2:
-                if st.form_submit_button("❌ Cancelar"):
-                    del st.session_state['edit_jogo']
-                    st.rerun()
+        with col2:
+            if st.form_submit_button("❌ Cancelar"):
+                del st.session_state['edit_jogo']
+                st.rerun()
             
                         
 def pagina_taticas():
@@ -999,15 +1004,15 @@ def pagina_taticas():
     st.subheader("Posicionamento dos Jogadores")
     
     if formacao == "4-4-2":
-        posicoes = ["Goleiro", "Defesa 1", "Defesa 2", "Defesa 3", "Defesa 4", 
+        posicoes = ["Guarda-Redes", "Defesa 1", "Defesa 2", "Defesa 3", "Defesa 4", 
                    "Meio 1", "Meio 2", "Meio 3", "Meio 4", 
                    "Atacante 1", "Atacante 2"]
     elif formacao == "4-3-3":
-        posicoes = ["Goleiro", "Defesa 1", "Defesa 2", "Defesa 3", "Defesa 4", 
+        posicoes = ["Guarda-Redes", "Defesa 1", "Defesa 2", "Defesa 3", "Defesa 4", 
                    "Meio 1", "Meio 2", "Meio 3", 
                    "Atacante 1", "Atacante 2", "Atacante 3"]
     else:  # 3-5-2
-        posicoes = ["Goleiro", "Defesa 1", "Defesa 2", "Defesa 3", 
+        posicoes = ["Guarda-Redes", "Defesa 1", "Defesa 2", "Defesa 3", 
                    "Meio 1", "Meio 2", "Meio 3", "Meio 4", "Meio 5", 
                    "Atacante 1", "Atacante 2"]
     
@@ -1196,9 +1201,19 @@ def get_menu_options(user_type):
             "📊 Relatórios": pagina_relatorios,
             "⚙️ Configurações": pagina_configuracoes
         },
+        "treinador_adjunto": {  # NOVO
+            "🏠 Dashboard": pagina_dashboard,
+            "👥 Jogadores": pagina_jogadores,
+            "📅 Treinos": pagina_treinos,
+            "📋 Plano de Treino": pagina_plano_treino,
+            "⚽ Jogos": pagina_jogos,
+            "📐 Táticas": pagina_taticas,
+            "📊 Relatórios": pagina_relatorios
+            # Não inclui configurações!
+        },
         "jogador": {
             "🏠 Meu Perfil": pagina_perfil_jogador,
-            "👥 Jogadores": pagina_jogadores  # <-- Adicione esta linha
+            "👥 Jogadores": pagina_jogadores
         }
     }.get(user_type, {"🏠 Meu Perfil": pagina_perfil_jogador})
 
