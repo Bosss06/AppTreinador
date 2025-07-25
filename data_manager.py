@@ -73,43 +73,43 @@ class DataManager:
             logger.error(f"Erro ao salvar dados: {str(e)}")
             return False
 
-    @staticmethod
-    def create_secure_backup(local_only=False, dropbox_only=False):
-        """Cria um backup seguro dos dados (local, Dropbox ou ambos)"""
-        try:
-            # Criar diretório de backups se não existir
-            os.makedirs('backups', exist_ok=True)
-            
-            # Carregar dados atuais
-            data = DataManager.load_data()
-            
-            # Nome do arquivo de backup com timestamp
-            timestamp = datetime.now().strftime("%Y%m%d_%H%M%S")
-            backup_filename = f"backup_{timestamp}.json"
-            backup_path = os.path.join('backups', backup_filename)
-            
-            # Salvar backup local se não for só Dropbox
-            if not dropbox_only:
-                with open(backup_path, 'w', encoding='utf-8') as f:
-                    json.dump(data, f, ensure_ascii=False, indent=4)
-            
-            # Tentar fazer upload para o Dropbox se configurado e não for só local
-            dropbox_token = os.getenv('DROPBOX_ACCESS_TOKEN')
-            if not local_only and dropbox_token:
-                try:
-                    dbx = dropbox.Dropbox(dropbox_token)
-                    # Se já salvou local, lê o arquivo salvo; senão, faz upload direto dos dados
-                    if not dropbox_only:
-                        with open(backup_path, 'rb') as f:
-                            dbx.files_upload(f.read(), f'/backups/{backup_filename}')
-                    else:
-                        # Se só Dropbox, faz upload direto dos dados atuais
-                        dbx.files_upload(json.dumps(data, ensure_ascii=False, indent=4).encode('utf-8'), f'/backups/{backup_filename}')
-                except AuthError:
-                    return False  # Token inválido
-                except Exception as e:
-                    logging.error(f"Erro ao enviar para Dropbox: {str(e)}")
-                    return False
+        @staticmethod
+        def create_secure_backup(local_only=False, dropbox_only=False):
+            """Cria um backup seguro dos dados (local, Dropbox ou ambos)"""
+            try:
+                # Criar diretório de backups se não existir
+                os.makedirs('backups', exist_ok=True)
+                
+                # Carregar dados atuais
+                data = DataManager.load_data()
+                
+                # Nome do arquivo de backup com timestamp
+                timestamp = datetime.now().strftime("%Y%m%d_%H%M%S")
+                backup_filename = f"backup_{timestamp}.json"
+                backup_path = os.path.join('backups', backup_filename)
+                
+                # Salvar backup local se não for só Dropbox
+                if not dropbox_only:
+                    with open(backup_path, 'w', encoding='utf-8') as f:
+                        json.dump(data, f, ensure_ascii=False, indent=4)
+                
+                # Tentar fazer upload para o Dropbox se configurado e não for só local
+                dropbox_token = os.getenv('DROPBOX_ACCESS_TOKEN')
+                if not local_only and dropbox_token:
+                    try:
+                        dbx = dropbox.Dropbox(dropbox_token)
+                        # Se já salvou local, lê o arquivo salvo; senão, faz upload direto dos dados
+                        if not dropbox_only:
+                            with open(backup_path, 'rb') as f:
+                                dbx.files_upload(f.read(), f'/backups/{backup_filename}')
+                        else:
+                            # Se só Dropbox, faz upload direto dos dados atuais
+                            dbx.files_upload(json.dumps(data, ensure_ascii=False, indent=4).encode('utf-8'), f'/backups/{backup_filename}')
+                    except AuthError:
+                        return False  # Token inválido
+                    except Exception as e:
+                        logging.error(f"Erro ao enviar para Dropbox: {str(e)}")
+                        return False
 
     @staticmethod
     def restore_backup(backup_file: str) -> bool:
