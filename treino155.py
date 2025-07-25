@@ -1115,11 +1115,25 @@ def pagina_configuracoes():
             st.error(f"⚠️ Erro na conexão: {str(e)}")
     
     # Botão de backup
+        destino_backup = st.selectbox(
+        "Destino do backup",
+        ["Local", "Dropbox", "Ambos"],
+        index=0
+    )
+
     if st.button("🔄 Criar Backup Agora"):
         with st.spinner("Criando backup..."):
             try:
-                success = DataManager.create_secure_backup()
-                # ...restante do seu código de backup...
+                if destino_backup == "Local":
+                    success = DataManager.create_secure_backup(local_only=True)
+                elif destino_backup == "Dropbox":
+                    success = DataManager.create_secure_backup(dropbox_only=True)
+                else:  # Ambos
+                    success = DataManager.create_secure_backup(local_only=False, dropbox_only=False)
+                if success:
+                    st.success("Backup criado com sucesso!")
+                else:
+                    st.error("Falha ao criar backup.")
             except Exception as e:
                 st.error(f"❌ Erro inesperado: {str(e)}")
 
