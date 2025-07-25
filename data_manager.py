@@ -6,11 +6,6 @@ from datetime import datetime
 import dropbox
 from dropbox.exceptions import AuthError, ApiError, HttpError
 import shutil
-
-
-
-
-
 logger = logging.getLogger(__name__)
 logger.setLevel(logging.INFO)
 
