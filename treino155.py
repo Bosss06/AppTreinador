@@ -21,8 +21,60 @@ from dropbox.exceptions import AuthError, ApiError, HttpError
 
 # --- Configurações Iniciais ---
 load_dotenv()
-st.set_page_config(page_title="App do Treinador PRO ⚽", layout="wide")
+st.set_page_config(
+    page_title="App do Treinador PRO ⚽", 
+    layout="wide",
+    initial_sidebar_state="expanded"
+)
 logging.basicConfig(level=logging.INFO)
+
+# Função para manter a app ativa
+def keep_alive():
+    """Mantém a aplicação ativa fazendo pequenas operações em background"""
+    if 'last_activity' not in st.session_state:
+        st.session_state.last_activity = time.time()
+    
+    current_time = time.time()
+    # Se passou mais de 10 minutos sem atividade, faz uma operação pequena
+    if current_time - st.session_state.last_activity > 600:  # 10 minutos
+        st.session_state.last_activity = current_time
+        # Operação invisível para manter sessão ativa
+        _ = DataManager.load_data()
+
+# Script JavaScript para manter atividade
+def inject_keep_alive_script():
+    """Injeta JavaScript para manter a sessão ativa"""
+    st.markdown("""
+    <script>
+    // Ping a cada 5 minutos para manter sessão ativa
+    setInterval(function() {
+        fetch(window.location.href, {
+            method: 'HEAD'
+        }).catch(function() {
+            // Ignorar erros
+        });
+    }, 300000); // 5 minutos
+    
+    // Detectar atividade do usuário
+    let lastActivity = Date.now();
+    
+    ['mousedown', 'mousemove', 'keypress', 'scroll', 'touchstart', 'click'].forEach(function(event) {
+        document.addEventListener(event, function() {
+            lastActivity = Date.now();
+        }, true);
+    });
+    
+    // Verificar inatividade
+    setInterval(function() {
+        if (Date.now() - lastActivity < 600000) { // 10 minutos
+            // Usuário ativo, fazer ping
+            fetch(window.location.href, {
+                method: 'HEAD'
+            }).catch(function() {});
+        }
+    }, 60000); // Verificar a cada minuto
+    </script>
+    """, unsafe_allow_html=True)
 
 # --- Constantes ---
 ASSETS_DIR = "assets"
@@ -331,7 +383,7 @@ class UIComponents:
                 
                 pontos_fortes = st.multiselect(
                     "Pontos Fortes",
-                    ["Finalização", "Velocidade", "Força", "Visão de Jogo", "Cabeceamento"],
+                    ["Finalização", "Velocidade", "Força", "Agressivo", "Agil", "Visão de Jogo", "Cabeceamento"],
                     default=dados['pontos_fortes']
                 )
 
@@ -345,9 +397,9 @@ class UIComponents:
                             if st.form_submit_button("🔑 Resetar Senha"):
                                 if resetar_senha_jogador(login, nova_senha):
                                     st.success("Senha redefinida com sucesso!")
-                                    st.experimental_rerun()
-                            else:
-                                st.error("Erro ao redefinir senha.") 
+                                    st.rerun()
+                                else:
+                                    st.error("Erro ao redefinir senha.") 
 
                 # Botões de ação
                 col1, col2 = st.columns(2)
@@ -1098,109 +1150,252 @@ def pagina_relatorios():
 def pagina_configuracoes():
     st.title("⚙️ Configurações do Sistema")
     
-    # Seção de status
-    st.subheader("Status do Dropbox")
-    dropbox_token = os.getenv('DROPBOX_ACCESS_TOKEN')
-    dbx = None
-    if not dropbox_token:
-        st.error("❌ Token do Dropbox não configurado")
+    # Seção de status do Dropbox
+    st.subheader("📡 Status do Dropbox")
+    dbx = DataManager.get_dropbox_client()
+    
+    if not dbx:
+        st.error("❌ Não foi possível conectar ao Dropbox")
+        st.info("💡 Configure as seguintes variáveis de ambiente:")
+        st.code("""
+DROPBOX_ACCESS_TOKEN=seu_access_token
+DROPBOX_REFRESH_TOKEN=seu_refresh_token  (opcional, para renovação automática)
+DROPBOX_APP_KEY=sua_app_key  (opcional, para renovação automática)
+DROPBOX_APP_SECRET=seu_app_secret  (opcional, para renovação automática)
+        """)
+        
+        if st.button("🔄 Tentar Renovar Token"):
+            if DataManager.refresh_dropbox_token():
+                st.success("✅ Token renovado com sucesso!")
+                st.rerun()
+            else:
+                st.error("❌ Falha ao renovar token")
     else:
         try:
-            dbx = dropbox.Dropbox(dropbox_token)
             account = dbx.users_get_current_account()
-            st.success(f"✅ Conectado ao Dropbox como: {account.name.display_name}")
-        except AuthError:
-            st.error("❌ Token do Dropbox expirado ou inválido")
+            st.success(f"✅ Conectado ao Dropbox como: **{account.name.display_name}**")
+            st.info(f"📧 Email: {account.email}")
+            
+            # Verificar espaço usado
+            try:
+                usage = dbx.users_get_space_usage()
+                used_gb = usage.used / (1024**3)
+                allocated_gb = usage.allocation.get_individual().allocated / (1024**3)
+                st.metric("💾 Espaço Usado", f"{used_gb:.2f} GB / {allocated_gb:.2f} GB")
+            except:
+                pass
+                
         except Exception as e:
             st.error(f"⚠️ Erro na conexão: {str(e)}")
     
-    # Botão de backup
+    st.divider()
+    
+    # Seção de backup
+    st.subheader("🔄 Gestão de Backups")
+    
+    # Backup automático
+    col1, col2 = st.columns(2)
+    with col1:
         destino_backup = st.selectbox(
-        "Destino do backup",
-        ["Local", "Dropbox", "Ambos"],
-        index=0
-    )
+            "Destino do backup",
+            ["Local", "Dropbox", "Ambos"],
+            index=2  # Padrão: Ambos
+        )
+        
+        include_photos = st.checkbox("📷 Incluir fotos dos jogadores", value=True)
+    
+    with col2:
+        if st.button("🔄 Criar Backup Completo"):
+            with st.spinner("Criando backup completo..."):
+                try:
+                    if destino_backup == "Local":
+                        success = DataManager.create_secure_backup(local_only=True)
+                    elif destino_backup == "Dropbox":
+                        success = DataManager.create_secure_backup(dropbox_only=True)
+                    else:  # Ambos
+                        success = DataManager.create_secure_backup()
+                    
+                    if success:
+                        st.success("✅ Backup criado com sucesso!")
+                        if include_photos:
+                            st.info("📷 Fotos incluídas no backup")
+                    else:
+                        st.error("❌ Falha ao criar backup")
+                except Exception as e:
+                    st.error(f"❌ Erro inesperado: {str(e)}")
 
-    if st.button("🔄 Criar Backup Agora"):
-        with st.spinner("Criando backup..."):
-            try:
-                if destino_backup == "Local":
-                    success = DataManager.create_secure_backup(local_only=True)
-                elif destino_backup == "Dropbox":
-                    success = DataManager.create_secure_backup(dropbox_only=True)
-                else:  # Ambos
-                    success = DataManager.create_secure_backup(local_only=False, dropbox_only=False)
-                if success:
-                    st.success("Backup criado com sucesso!")
-                else:
-                    st.error("Falha ao criar backup.")
-            except Exception as e:
-                st.error(f"❌ Erro inesperado: {str(e)}")
+    st.divider()
 
-    # --- NOVA SEÇÃO: Restaurar Backup de Segurança ---
-    st.subheader("🗂️ Restaurar Backup de Segurança")
-
-    # Opção 1: Upload manual
-    uploaded_file = st.file_uploader("Restaurar backup manualmente (.json)", type=["json"])
-    if uploaded_file is not None:
-        if st.button("⚠️ Restaurar este backup (upload manual)"):
-            try:
-                temp_path = "data/temp_restore.json"
-                with open(temp_path, "wb") as f:
-                    f.write(uploaded_file.read())
-                if DataManager.restore_backup(temp_path):
-                    st.success("Backup restaurado com sucesso! Recarregue a página.")
-                else:
-                    st.error("Falha ao restaurar backup.")
-            except Exception as e:
-                st.error(f"Erro ao restaurar backup: {str(e)}")
-
-    # Opção 2: Restaurar de backups locais
-    st.markdown("---")
-    st.subheader("Restaurar backup local existente")
-    local_backup_dir = "backups"
-    if os.path.exists(local_backup_dir):
-        backups = sorted([f for f in os.listdir(local_backup_dir) if f.startswith('backup_') and f.endswith('.json')], reverse=True)
-        if backups:
-            selected_local = st.selectbox("Escolha um backup local", backups)
-            if st.button("⚠️ Restaurar este backup local"):
-                backup_path = os.path.join(local_backup_dir, selected_local)
-                if DataManager.restore_backup(backup_path):
-                    st.success("Backup local restaurado com sucesso! Recarregue a página.")
-                else:
-                    st.error("Falha ao restaurar backup local.")
-        else:
-            st.info("Nenhum backup local encontrado.")
-    else:
-        st.info("Pasta de backups locais não encontrada.")
-
-    # Opção 3: Restaurar do Dropbox
-    if dropbox_token:
-        st.markdown("---")
-        st.subheader("Restaurar backup do Dropbox")
-        try:
-            dbx = dropbox.Dropbox(dropbox_token)
-            files = dbx.files_list_folder("/backups").entries
-            backups_dropbox = [f for f in files if isinstance(f, dropbox.files.FileMetadata) and f.name.endswith(".json")]
-            backups_dropbox = sorted(backups_dropbox, key=lambda x: x.server_modified, reverse=True)
-            if backups_dropbox:
-                nomes = [f"{b.name} ({b.server_modified.strftime('%Y-%m-%d %H:%M')})" for b in backups_dropbox]
-                selected_idx = st.selectbox("Escolha um backup do Dropbox", range(len(nomes)), format_func=lambda i: nomes[i])
-                if st.button("⚠️ Restaurar este backup do Dropbox"):
-                    with st.spinner("Baixando e restaurando backup..."):
-                        backup_file = backups_dropbox[selected_idx]
-                        _, res = dbx.files_download(backup_file.path_display)
-                        temp_path = "data/temp_restore_dropbox.json"
+    # Seção de restauração
+    st.subheader("🗂️ Restaurar Backup")
+    
+    tab1, tab2, tab3 = st.tabs(["📁 Upload Manual", "💻 Backup Local", "☁️ Backup Dropbox"])
+    
+    with tab1:
+        st.write("**Restaurar arquivo de backup manualmente**")
+        uploaded_file = st.file_uploader("Arquivo de dados (.json)", type=["json"])
+        uploaded_photos = st.file_uploader("Arquivo de fotos (.zip) - Opcional", type=["zip"])
+        
+        if uploaded_file is not None:
+            col1, col2 = st.columns(2)
+            with col1:
+                if st.button("⚠️ Restaurar Dados", type="primary"):
+                    try:
+                        temp_path = "data/temp_restore.json"
+                        os.makedirs("data", exist_ok=True)
                         with open(temp_path, "wb") as f:
-                            f.write(res.content)
-                        if DataManager.restore_backup(temp_path):
-                            st.success("Backup do Dropbox restaurado com sucesso! Recarregue a página.")
+                            f.write(uploaded_file.read())
+                        
+                        photos_path = None
+                        if uploaded_photos:
+                            photos_path = "data/temp_photos.zip"
+                            with open(photos_path, "wb") as f:
+                                f.write(uploaded_photos.read())
+                        
+                        if DataManager.restore_backup(temp_path, photos_path):
+                            st.success("✅ Backup restaurado com sucesso! Recarregue a página.")
                         else:
-                            st.error("Falha ao restaurar backup do Dropbox.")
+                            st.error("❌ Falha ao restaurar backup")
+                            
+                        # Limpar arquivos temporários
+                        if os.path.exists(temp_path):
+                            os.remove(temp_path)
+                        if photos_path and os.path.exists(photos_path):
+                            os.remove(photos_path)
+                            
+                    except Exception as e:
+                        st.error(f"❌ Erro ao restaurar: {str(e)}")
+            
+            with col2:
+                st.info("⚠️ **ATENÇÃO:** Isso substituirá todos os dados atuais!")
+
+    with tab2:
+        st.write("**Restaurar de backups locais existentes**")
+        local_backup_dir = "backups"
+        if os.path.exists(local_backup_dir):
+            backups = sorted([f for f in os.listdir(local_backup_dir) 
+                            if f.startswith('backup_') and f.endswith('.json')], reverse=True)
+            photos_backups = sorted([f for f in os.listdir(local_backup_dir) 
+                                   if f.startswith('fotos_backup_') and f.endswith('.zip')], reverse=True)
+            
+            if backups:
+                selected_local = st.selectbox("Escolha um backup local", backups)
+                
+                # Verificar se existe backup de fotos correspondente
+                corresponding_photo_backup = None
+                backup_timestamp = selected_local.replace('backup_', '').replace('.json', '')
+                for photo_backup in photos_backups:
+                    if backup_timestamp in photo_backup:
+                        corresponding_photo_backup = photo_backup
+                        break
+                
+                if corresponding_photo_backup:
+                    st.success(f"📷 Backup de fotos encontrado: {corresponding_photo_backup}")
+                    restore_photos = st.checkbox("Restaurar fotos também", value=True)
+                else:
+                    st.warning("📷 Nenhum backup de fotos correspondente encontrado")
+                    restore_photos = False
+                
+                if st.button("⚠️ Restaurar Backup Local", type="primary"):
+                    backup_path = os.path.join(local_backup_dir, selected_local)
+                    photos_path = os.path.join(local_backup_dir, corresponding_photo_backup) if restore_photos and corresponding_photo_backup else None
+                    
+                    if DataManager.restore_backup(backup_path, photos_path):
+                        st.success("✅ Backup local restaurado com sucesso! Recarregue a página.")
+                    else:
+                        st.error("❌ Falha ao restaurar backup local")
             else:
-                st.info("Nenhum backup encontrado no Dropbox.")
-        except Exception as e:
-            st.error(f"Erro ao listar/restaurar backups do Dropbox: {str(e)}")
+                st.info("ℹ️ Nenhum backup local encontrado")
+        else:
+            st.info("ℹ️ Pasta de backups locais não encontrada")
+
+    with tab3:
+        st.write("**Restaurar backup do Dropbox**")
+        if dbx:
+            try:
+                dropbox_backups = DataManager.list_dropbox_backups()
+                if dropbox_backups:
+                    backup_options = []
+                    for backup in dropbox_backups:
+                        size_mb = backup['size'] / (1024*1024)
+                        date_str = backup['modified'].strftime('%Y-%m-%d %H:%M')
+                        backup_options.append(f"{backup['name']} ({date_str}, {size_mb:.1f}MB)")
+                    
+                    selected_idx = st.selectbox("Escolha um backup do Dropbox", range(len(backup_options)), 
+                                              format_func=lambda i: backup_options[i])
+                    
+                    restore_photos_dropbox = st.checkbox("Tentar restaurar fotos também", value=True)
+                    
+                    if st.button("⚠️ Restaurar do Dropbox", type="primary"):
+                        with st.spinner("Baixando e restaurando backup do Dropbox..."):
+                            selected_backup = dropbox_backups[selected_idx]
+                            if DataManager.restore_from_dropbox(selected_backup['name'], restore_photos_dropbox):
+                                st.success("✅ Backup do Dropbox restaurado com sucesso! Recarregue a página.")
+                            else:
+                                st.error("❌ Falha ao restaurar backup do Dropbox")
+                else:
+                    st.info("ℹ️ Nenhum backup encontrado no Dropbox")
+            except Exception as e:
+                st.error(f"❌ Erro ao listar backups do Dropbox: {str(e)}")
+        else:
+            st.warning("⚠️ Dropbox não conectado")
+
+    st.divider()
+    
+    # Seção de manutenção
+    st.subheader("🔧 Manutenção do Sistema")
+    
+    col1, col2 = st.columns(2)
+    with col1:
+        st.write("**Limpeza de arquivos temporários**")
+        if st.button("🧹 Limpar Cache"):
+            try:
+                # Limpar arquivos temporários
+                temp_files = ["data/temp_restore.json", "data/temp_photos.zip", "data/temp_restore_dropbox.json"]
+                cleaned = 0
+                for temp_file in temp_files:
+                    if os.path.exists(temp_file):
+                        os.remove(temp_file)
+                        cleaned += 1
+                
+                # Limpar backups antigos (manter apenas os 10 mais recentes)
+                if os.path.exists("backups"):
+                    backups = sorted([f for f in os.listdir("backups") if f.endswith('.json') or f.endswith('.zip')])
+                    if len(backups) > 20:  # Manter 10 dados + 10 fotos
+                        for old_backup in backups[:-20]:
+                            os.remove(os.path.join("backups", old_backup))
+                            cleaned += 1
+                
+                st.success(f"✅ {cleaned} arquivos limpos")
+            except Exception as e:
+                st.error(f"❌ Erro na limpeza: {str(e)}")
+    
+    with col2:
+        st.write("**Informações do sistema**")
+        data = DataManager.load_data()
+        st.metric("� Total de Jogadores", len(data.get('jogadores', [])))
+        st.metric("� Total de Treinos", len(data.get('treinos', {})))
+        st.metric("⚽ Total de Jogos", len(data.get('jogos', [])))
+        st.metric("📐 Total de Táticas", len(data.get('taticas', [])))
+
+    # Informações sobre prevenção de reboot
+    st.divider()
+    st.subheader("⏰ Prevenção de Reboot")
+    st.info("""
+    �️ **Sistema de Prevenção Ativo:**
+    - A aplicação faz ping automático a cada 5 minutos
+    - Detecta atividade do usuário automaticamente  
+    - Mantém sessão ativa durante uso normal
+    - Reduz significativamente reboots por inatividade
+    """)
+    
+    if st.checkbox("🔍 Mostrar detalhes técnicos"):
+        st.code("""
+        • JavaScript injected para detectar atividade
+        • Fetch requests automáticos em background
+        • Session state management otimizado
+        • Operações leves para manter conexão
+        """)
 
 def get_menu_options(user_type):
     """Retorna os menus baseados no tipo de usuário"""
@@ -1233,6 +1428,10 @@ def get_menu_options(user_type):
 
 def main():
     """Função principal da aplicação"""
+    # Manter aplicação ativa
+    keep_alive()
+    inject_keep_alive_script()
+    
     # Verificação de ambiente
     if os.path.exists('secrets.toml'):
         st.sidebar.info("✅ Modo local detectado")
