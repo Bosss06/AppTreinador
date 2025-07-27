@@ -1,0 +1,24 @@
+[theme]
+primaryColor = "#FF6B35"
+backgroundColor = "#FFFFFF"
+secondaryBackgroundColor = "#F0F2F6"
+textColor = "#262730"
+
+[server]
+# Configurações para reduzir reboots
+maxUploadSize = 200
+maxMessageSize = 200
+enableCORS = false
+enableXsrfProtection = true
+
+# Configurações de sessão
+sessionTimeout = 7200  # 2 horas em segundos
+
+[browser]
+gatherUsageStats = false
+showErrorDetails = false
+
+[global]
+# Configurações para manter app ativa
+suppressWarnings = true
+showWarningOnDirectExecution = false
