@@ -444,11 +444,13 @@ class UIComponents:
 
                             data = DataManager.load_data()
                             if modo_edicao:
-                                for i, j in enumerate(data['jogadores']):
+                                for i, j in enumerate(data.get('jogadores', [])):
                                     if j.get('id') == dados.get('id'):
                                         data['jogadores'][i] = novo_jogador
                                         break
                             else:
+                                if 'jogadores' not in data:
+                                    data['jogadores'] = []
                                 data['jogadores'].append(novo_jogador)
 
                             if DataManager.save_data(data):
@@ -471,8 +473,8 @@ def mostrar_uso_recursos():
     st.sidebar.subheader("📊 Estatísticas")
     
     col1, col2 = st.sidebar.columns(2)
-    col1.metric("Jogadores", len(data['jogadores']))
-    col2.metric("Treinos", len(data['treinos']))
+    col1.metric("Jogadores", len(data.get('jogadores', [])))
+    col2.metric("Treinos", len(data.get('treinos', {})))
     
     if 'jogos' in data:
         st.sidebar.metric("Jogos", len(data['jogos']))
@@ -483,7 +485,7 @@ def resetar_senha_jogador(login_jogador, nova_senha):
         data = DataManager.load_data()
         auth = Authentication()
         
-        for jogador in data['jogadores']:
+        for jogador in data.get('jogadores', []):
             if jogador.get('login') == login_jogador:
                 jogador['senha_hash'] = auth.hash_password(nova_senha)
                 if DataManager.save_data(data):
@@ -517,13 +519,13 @@ def pagina_dashboard():
     # Métricas
     if st.session_state.get('tipo_usuario') == 'treinador':
         col1, col2, col3 = st.columns(3)
-        col1.metric("👥 Jogadores", len(data['jogadores']))
-        col2.metric("📅 Treinos", len(data['treinos']))
+        col1.metric("👥 Jogadores", len(data.get('jogadores', [])))
+        col2.metric("📅 Treinos", len(data.get('treinos', {})))
         col3.metric("⚽ Jogos", len(data.get('jogos', [])))
     else:
         jogador = st.session_state.get('jogador_info', {})
         col1, col2 = st.columns(2)
-        col1.metric("📅 Próximos Treinos", len([t for t in data['treinos'].values() if jogador.get('nome') in t.get('participantes', [])]))
+        col1.metric("📅 Próximos Treinos", len([t for t in data.get('treinos', {}).values() if jogador.get('nome') in t.get('participantes', [])]))
         col2.metric("⚽ Próximos Jogos", len([j for j in data.get('jogos', []) if not j.get('resultado') and jogador.get('nome') in j.get('convocados', [])]))
     
     # Próximos compromissos
@@ -532,10 +534,10 @@ def pagina_dashboard():
     
     with tab1:
         if st.session_state.get('tipo_usuario') == 'treinador':
-            treinos = data['treinos'].items()
+            treinos = data.get('treinos', {}).items()
         else:
             jogador_nome = st.session_state.get('jogador_info', {}).get('nome')
-            treinos = [(dt, t) for dt, t in data['treinos'].items() if jogador_nome in t.get('participantes', [])]
+            treinos = [(dt, t) for dt, t in data.get('treinos', {}).items() if jogador_nome in t.get('participantes', [])]
         
         if treinos:
             # Filtrar apenas treinos com data válida (formato YYYY-MM-DD)
@@ -587,7 +589,7 @@ def pagina_jogadores():
     # Filtros
     col1, col2, col3 = st.columns(3)
     with col1:
-        posicoes = list({j['posicao'] for j in data['jogadores']}) if data['jogadores'] else []
+        posicoes = list({j['posicao'] for j in data.get('jogadores', [])}) if data.get('jogadores', []) else []
         pos_filter = st.selectbox("Filtrar por posição", ["Todos"] + posicoes)
     with col2:
         search_term = st.text_input("Buscar por nome")
@@ -595,7 +597,7 @@ def pagina_jogadores():
         items_per_page = st.selectbox("Jogadores por página", [5, 10, 20], index=1)
 
     # Aplicar filtros
-    filtered_players = data['jogadores']
+    filtered_players = data.get('jogadores', [])
     if pos_filter != "Todos":
         filtered_players = [j for j in filtered_players if j['posicao'] == pos_filter]
     if search_term:
@@ -635,7 +637,7 @@ def pagina_jogadores():
                 if st.button("✅ Confirmar", key="confirm_delete"):
                     try:
                         data = DataManager.load_data()
-                        data['jogadores'] = [j for j in data['jogadores'] if j['id'] != jogador['id']]
+                        data['jogadores'] = [j for j in data.get('jogadores', []) if j['id'] != jogador['id']]
                         if DataManager.save_data(data):
                             if jogador.get('foto') and os.path.exists(jogador['foto']):
                                 os.remove(jogador['foto'])
@@ -668,7 +670,7 @@ def pagina_perfil_jogador():
     data = DataManager.load_data()
     treinos_jogador = []
     
-    for data_treino, detalhes in data['treinos'].items():
+    for data_treino, detalhes in data.get('treinos', {}).items():
         if jogador['nome'] in detalhes.get('participantes', []):
             treinos_jogador.append((data_treino, detalhes))
     
@@ -734,17 +736,35 @@ def pagina_treinos():
             duracao = st.number_input("Duração (minutos)", min_value=30, max_value=180, value=90)
             
             exercicios_disponiveis = []
-            for categoria, exercs in data['exercicios'].items():
-                for exerc, duracao in exercs.items():
-                    exercicios_disponiveis.append(f"{categoria}: {exerc}")
+            # Verificar se existe a estrutura de exercícios
+            if 'exercicios' in data and data['exercicios']:
+                for categoria, exercs in data['exercicios'].items():
+                    for exerc, duracao in exercs.items():
+                        exercicios_disponiveis.append(f"{categoria}: {exerc}")
+            else:
+                # Exercícios padrão caso não existam na estrutura de dados
+                exercicios_padrao = [
+                    "Técnica: Controle de bola",
+                    "Técnica: Passe e receção",
+                    "Técnica: Finalização",
+                    "Física: Corrida contínua",
+                    "Física: Sprint",
+                    "Física: Resistência",
+                    "Tática: Posicionamento",
+                    "Tática: Marcação",
+                    "Tática: Construção de jogo"
+                ]
+                exercicios_disponiveis = exercicios_padrao
             
             exercicios = st.multiselect("Exercícios", exercicios_disponiveis)
             
-            jogadores_disponiveis = [j['nome'] for j in data['jogadores']]
+            jogadores_disponiveis = [j['nome'] for j in data.get('jogadores', [])]
             participantes = st.multiselect("Participantes", jogadores_disponiveis)
             
             if st.form_submit_button("💾 Agendar Treino"):
                 data_str = data_treino.strftime('%Y-%m-%d')
+                if 'treinos' not in data:
+                    data['treinos'] = {}
                 data['treinos'][data_str] = {
                     'hora': hora.strftime('%H:%M'),
                     'local': local,
@@ -804,9 +824,10 @@ def pagina_treinos():
                         st.rerun()
                 with col2:
                     if st.button("🗑️ Eliminar", key=f"del_treino_{data_treino}"):
-                        data['treinos'].pop(data_treino)
-                        DataManager.save_data(data)
-                        st.success("Treino eliminado!")
+                        if 'treinos' in data and data_treino in data['treinos']:
+                            data['treinos'].pop(data_treino)
+                            DataManager.save_data(data)
+                            st.success("Treino eliminado!")
                         st.rerun()
                         # Formulário de edição (fora do loop)
         if 'edit_treino' in st.session_state:
@@ -817,8 +838,12 @@ def pagina_treinos():
                 local = st.text_input("Local", value=detalhes['local'])
                 objetivo = st.text_input("Objetivo", value=detalhes['objetivo'])
                 duracao = st.number_input("Duração (minutos)", value=detalhes['duracao'], min_value=30, max_value=180)
-                exercicios = st.multiselect("Exercícios", detalhes['exercicios'], default=detalhes['exercicios'])
-                participantes = st.multiselect("Participantes", [j['nome'] for j in data['jogadores']], default=detalhes['participantes'])
+                exercicios = st.multiselect("Exercícios", 
+                                           detalhes.get('exercicios', []), 
+                                           default=detalhes.get('exercicios', []))
+                participantes = st.multiselect("Participantes", 
+                                              [j['nome'] for j in data.get('jogadores', [])], 
+                                              default=detalhes.get('participantes', []))
                 col1, col2 = st.columns(2)
                 with col1:
                     if st.form_submit_button("💾 Salvar Alterações"):
