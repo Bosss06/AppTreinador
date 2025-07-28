@@ -1375,6 +1375,86 @@ def pagina_configuracoes():
     
     # Seção de status do Dropbox
     st.subheader("📡 Status do Dropbox")
+    
+    # Verificação dos tokens
+    access_token = os.getenv('DROPBOX_ACCESS_TOKEN')
+    refresh_token = os.getenv('DROPBOX_REFRESH_TOKEN')
+    app_key = os.getenv('DROPBOX_APP_KEY')
+    app_secret = os.getenv('DROPBOX_APP_SECRET')
+    
+    # Status das variáveis
+    st.write("**Status das Variáveis de Ambiente:**")
+    col1, col2 = st.columns(2)
+    with col1:
+        st.write(f"🔑 ACCESS_TOKEN: {'✅ Configurado' if access_token else '❌ Ausente'}")
+        st.write(f"🔄 REFRESH_TOKEN: {'✅ Configurado' if refresh_token else '❌ Ausente'}")
+    with col2:
+        st.write(f"🗝️ APP_KEY: {'✅ Configurado' if app_key else '❌ Ausente'}")
+        st.write(f"🔐 APP_SECRET: {'✅ Configurado' if app_secret else '❌ Ausente'}")
+    
+    if not refresh_token:
+        st.warning("⚠️ **REFRESH_TOKEN ausente!** Renovação automática não funcionará.")
+        st.info("💡 Precisa refazer o fluxo OAuth completo para gerar o refresh_token.")
+        
+        with st.expander("🔧 Como Gerar REFRESH_TOKEN", expanded=False):
+            st.write("""
+            **Passos para gerar o REFRESH_TOKEN:**
+            
+            1. **App do Dropbox**: Vá para https://www.dropbox.com/developers/apps
+            2. **Configurar OAuth**: Ative "Allow implicit grant" = OFF e "Allow PKCE" = ON
+            3. **Scopes**: Adicione `files.content.read`, `files.content.write`, `files.metadata.read`
+            4. **URL de Redirecionamento**: Adicione `http://localhost:8080/callback`
+            5. **Gerar URL OAuth**: Use este formato:
+            """)
+            
+            if app_key:
+                oauth_url = f"https://www.dropbox.com/oauth2/authorize?client_id={app_key}&response_type=code&token_access_type=offline&redirect_uri=http://localhost:8080/callback"
+                st.code(oauth_url)
+                st.write("6. **Acesse a URL acima** e autorize a aplicação")
+                st.write("7. **Capture o código** da URL de redirecionamento")
+                st.write("8. **Use o código** para trocar por access_token e refresh_token")
+            
+            # Ferramenta para trocar código por tokens
+            st.write("**🔄 Trocar Código OAuth por Tokens:**")
+            oauth_code = st.text_input("Cole aqui o código OAuth capturado:", key="oauth_code")
+            
+            if oauth_code and app_key and app_secret:
+                if st.button("🔄 Gerar Tokens"):
+                    try:
+                        import requests
+                        
+                        # Trocar código por tokens
+                        token_url = "https://api.dropbox.com/oauth2/token"
+                        token_data = {
+                            'code': oauth_code,
+                            'grant_type': 'authorization_code',
+                            'redirect_uri': 'http://localhost:8080/callback',
+                            'client_id': app_key,
+                            'client_secret': app_secret
+                        }
+                        
+                        response = requests.post(token_url, data=token_data)
+                        
+                        if response.status_code == 200:
+                            tokens = response.json()
+                            new_access_token = tokens.get('access_token')
+                            new_refresh_token = tokens.get('refresh_token')
+                            
+                            st.success("✅ Tokens gerados com sucesso!")
+                            st.write("**Adicione estas variáveis ao Streamlit Cloud:**")
+                            st.code(f"""
+DROPBOX_ACCESS_TOKEN={new_access_token}
+DROPBOX_REFRESH_TOKEN={new_refresh_token}
+                            """)
+                            
+                        else:
+                            st.error(f"❌ Erro ao gerar tokens: {response.text}")
+                            
+                    except Exception as e:
+                        st.error(f"❌ Erro: {str(e)}")
+    
+    st.divider()
+    
     dbx = get_dropbox_client_with_retry()
     
     if not dbx:
