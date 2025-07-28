@@ -1543,30 +1543,30 @@ DROPBOX_APP_SECRET=seu_app_secret  (necessário para renovação automática)
         st.write("**Restaurar backup do Dropbox**")
         if dbx:
             try:
-                    dropbox_backups = list_dropbox_backups_with_retry()
-                    if dropbox_backups:
-                        backup_options = []
-                        for backup in dropbox_backups:
-                            size_mb = backup['size'] / (1024*1024)
-                            date_str = backup['modified'].strftime('%Y-%m-%d %H:%M')
-                            backup_options.append(f"{backup['name']} ({date_str}, {size_mb:.1f}MB)")
-                        
-                        selected_idx = st.selectbox("Escolha um backup do Dropbox", range(len(backup_options)), 
-                                                  format_func=lambda i: backup_options[i])
-                        
-                        restore_photos_dropbox = st.checkbox("Tentar restaurar fotos também", value=True)
-                        
-                        if st.button("⚠️ Restaurar do Dropbox", type="primary"):
-                            with st.spinner("Baixando e restaurando backup do Dropbox..."):
-                                selected_backup = dropbox_backups[selected_idx]
-                                if restore_from_dropbox_with_retry(selected_backup['name'], restore_photos_dropbox):
-                                    st.success("✅ Backup do Dropbox restaurado com sucesso! Recarregue a página.")
-                                else:
-                                    st.error("❌ Falha ao restaurar backup do Dropbox")
-                    else:
-                        st.info("ℹ️ Nenhum backup encontrado no Dropbox")
-                except Exception as e:
-                    st.error(f"❌ Erro ao listar backups do Dropbox: {str(e)}")
+                dropbox_backups = list_dropbox_backups_with_retry()
+                if dropbox_backups:
+                    backup_options = []
+                    for backup in dropbox_backups:
+                        size_mb = backup['size'] / (1024*1024)
+                        date_str = backup['modified'].strftime('%Y-%m-%d %H:%M')
+                        backup_options.append(f"{backup['name']} ({date_str}, {size_mb:.1f}MB)")
+                    
+                    selected_idx = st.selectbox("Escolha um backup do Dropbox", range(len(backup_options)), 
+                                              format_func=lambda i: backup_options[i])
+                    
+                    restore_photos_dropbox = st.checkbox("Tentar restaurar fotos também", value=True)
+                    
+                    if st.button("⚠️ Restaurar do Dropbox", type="primary"):
+                        with st.spinner("Baixando e restaurando backup do Dropbox..."):
+                            selected_backup = dropbox_backups[selected_idx]
+                            if restore_from_dropbox_with_retry(selected_backup['name'], restore_photos_dropbox):
+                                st.success("✅ Backup do Dropbox restaurado com sucesso! Recarregue a página.")
+                            else:
+                                st.error("❌ Falha ao restaurar backup do Dropbox")
+                else:
+                    st.info("ℹ️ Nenhum backup encontrado no Dropbox")
+            except Exception as e:
+                st.error(f"❌ Erro ao listar backups do Dropbox: {str(e)}")
         else:
             st.warning("⚠️ Dropbox não conectado")
 
