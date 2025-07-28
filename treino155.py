@@ -1371,6 +1371,7 @@ def pagina_relatorios():
         st.write("Em desenvolvimento...")
 
 def pagina_configuracoes():
+    import os  # Garantir que os está disponível
     st.title("⚙️ Configurações do Sistema")
     
     # Seção de status do Dropbox
@@ -1609,7 +1610,6 @@ DROPBOX_REFRESH_TOKEN={new_refresh_token}
                         st.write("**📍 Informações do Backup:**")
                         
                         # Verificar se backups locais foram criados
-                        import os
                         backup_dir = "backups"
                         if os.path.exists(backup_dir):
                             backup_files = [f for f in os.listdir(backup_dir) if f.startswith('backup_') and f.endswith('.json')]
@@ -1955,4 +1955,3 @@ def main():
 
 if __name__ == "__main__":
     main()
-    
