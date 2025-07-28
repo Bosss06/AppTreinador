@@ -538,10 +538,27 @@ def pagina_dashboard():
             treinos = [(dt, t) for dt, t in data['treinos'].items() if jogador_nome in t.get('participantes', [])]
         
         if treinos:
-            next_train = min(treinos, key=lambda x: datetime.strptime(x[0], '%Y-%m-%d'))
-            st.write(f"**Data:** {next_train[0]}")
-            st.write(f"**Objetivo:** {next_train[1]['objetivo']}")
-            st.write(f"**Exercícios:** {', '.join(next_train[1]['exercicios'])}")
+            # Filtrar apenas treinos com data válida (formato YYYY-MM-DD)
+            treinos_com_data = []
+            for dt, t in treinos:
+                try:
+                    # Verificar se a chave é uma data válida
+                    datetime.strptime(dt, '%Y-%m-%d')
+                    treinos_com_data.append((dt, t))
+                except ValueError:
+                    # Se não for uma data (ex: UUID), verificar se tem data_criacao ou similar
+                    continue
+            
+            if treinos_com_data:
+                next_train = min(treinos_com_data, key=lambda x: datetime.strptime(x[0], '%Y-%m-%d'))
+                st.write(f"**Data:** {next_train[0]}")
+                st.write(f"**Objetivo:** {next_train[1].get('objetivo', 'N/A')}")
+                if 'exercicios' in next_train[1] and isinstance(next_train[1]['exercicios'], list):
+                    st.write(f"**Exercícios:** {', '.join(next_train[1]['exercicios'])}")
+                else:
+                    st.write("**Exercícios:** Não especificados")
+            else:
+                st.info("Nenhum treino com data específica agendado")
         else:
             st.warning("Nenhum treino agendado")
     
@@ -659,12 +676,30 @@ def pagina_perfil_jogador():
         st.warning("Nenhum treino agendado para você")
     else:
         for data_treino, detalhes in sorted(treinos_jogador):
-            with st.expander(f"📅 {data_treino} - {detalhes['objetivo']}", expanded=False):
-                st.write(f"**Local:** {detalhes['local']}")
-                st.write(f"**Duração:** {detalhes['duracao']} min")
-                st.write("**Exercícios:**")
-                for exercicio in detalhes['exercicios']:
-                    st.write(f"- {exercicio}")
+            # Exibir nome do treino ou data, dependendo do formato
+            titulo_treino = detalhes.get('nome', data_treino)
+            objetivo = detalhes.get('objetivo', 'N/A')
+            
+            with st.expander(f"📅 {titulo_treino} - {objetivo}", expanded=False):
+                if 'local' in detalhes:
+                    st.write(f"**Local:** {detalhes['local']}")
+                if 'duracao' in detalhes:
+                    st.write(f"**Duração:** {detalhes['duracao']} min")
+                
+                # Exercícios (pode ser lista de strings ou lista de objetos)
+                exercicios = detalhes.get('exercicios', [])
+                if exercicios:
+                    st.write("**Exercícios:**")
+                    for exercicio in exercicios:
+                        if isinstance(exercicio, dict):
+                            # Exercício é um objeto com nome e descrição
+                            nome_ex = exercicio.get('nome', 'Exercício sem nome')
+                            st.write(f"- {nome_ex}")
+                        else:
+                            # Exercício é uma string simples
+                            st.write(f"- {exercicio}")
+                else:
+                    st.write("**Exercícios:** Não especificados")
     
     # Próximos jogos do jogador
     st.subheader("⚽ Meus Próximos Jogos")
@@ -731,13 +766,37 @@ def pagina_treinos():
         st.warning("Nenhum treino agendado")
     else:
         for data_treino, detalhes in sorted(data['treinos'].items()):
-            with st.expander(f"{data_treino} - {detalhes['objetivo']} ({detalhes['local']})", expanded=False):
-                st.write(f"**Hora:** {detalhes['hora']}")
-                st.write(f"**Duração:** {detalhes['duracao']} minutos")
-                st.write(f"**Participantes:** {', '.join(detalhes['participantes'])}")
-                st.write("**Exercícios:**")
-                for exercicio in detalhes['exercicios']:
-                    st.write(f"- {exercicio}")
+            # Exibir nome do treino ou ID, dependendo do formato
+            titulo_treino = detalhes.get('nome', data_treino)
+            objetivo = detalhes.get('objetivo', 'N/A')
+            local = detalhes.get('local', 'N/A')
+            
+            with st.expander(f"{titulo_treino} - {objetivo} ({local})", expanded=False):
+                if 'hora' in detalhes:
+                    st.write(f"**Hora:** {detalhes['hora']}")
+                if 'duracao' in detalhes:
+                    st.write(f"**Duração:** {detalhes['duracao']} minutos")
+                
+                # Participantes
+                participantes = detalhes.get('participantes', [])
+                if participantes:
+                    st.write(f"**Participantes:** {', '.join(participantes)}")
+                
+                # Exercícios (pode ser lista de strings ou lista de objetos)
+                exercicios = detalhes.get('exercicios', [])
+                if exercicios:
+                    st.write("**Exercícios:**")
+                    for exercicio in exercicios:
+                        if isinstance(exercicio, dict):
+                            # Exercício é um objeto com nome e descrição
+                            nome_ex = exercicio.get('nome', 'Exercício sem nome')
+                            st.write(f"- {nome_ex}")
+                        else:
+                            # Exercício é uma string simples
+                            st.write(f"- {exercicio}")
+                else:
+                    st.write("**Exercícios:** Não especificados")
+                    
                 col1, col2 = st.columns(2)
                 with col1:
                     if st.button("✏️ Editar", key=f"edit_treino_{data_treino}"):
@@ -790,24 +849,36 @@ def pagina_treinos():
     treino_selecionado = st.selectbox(
         "Selecione o treino para notificar",
         options=list(data['treinos'].keys()),
-        format_func=lambda x: f"{x} - {data['treinos'][x]['objetivo']}"
+        format_func=lambda x: f"{data['treinos'][x].get('nome', x)} - {data['treinos'][x].get('objetivo', 'N/A')}"
     )
+    
+    treino_detalhes = data['treinos'][treino_selecionado]
+    nome_treino = treino_detalhes.get('nome', treino_selecionado)
     
     assunto = st.text_input(
         "Assunto do e-mail",
-        value=f"Informações sobre o treino de {treino_selecionado}"
+        value=f"Informações sobre o treino: {nome_treino}"
     )
+    
+    # Preparar lista de exercícios para email
+    exercicios_lista = []
+    for exercicio in treino_detalhes.get('exercicios', []):
+        if isinstance(exercicio, dict):
+            exercicios_lista.append(exercicio.get('nome', 'Exercício sem nome'))
+        else:
+            exercicios_lista.append(str(exercicio))
     
     corpo = st.text_area(
         "Mensagem (suporta HTML)",
         value=f"""
         <h2>Informações do Treino</h2>
-        <p><strong>Data:</strong> {treino_selecionado}</p>
-        <p><strong>Objetivo:</strong> {data['treinos'][treino_selecionado]['objetivo']}</p>
-        <p><strong>Local:</strong> {data['treinos'][treino_selecionado]['local']}</p>
+        <p><strong>Nome:</strong> {nome_treino}</p>
+        <p><strong>Objetivo:</strong> {treino_detalhes.get('objetivo', 'N/A')}</p>
+        <p><strong>Local:</strong> {treino_detalhes.get('local', 'N/A')}</p>
+        <p><strong>Duração:</strong> {treino_detalhes.get('duracao', 'N/A')} minutos</p>
         <p><strong>Exercícios:</strong></p>
         <ul>
-            {"".join(f"<li>{ex}</li>" for ex in data['treinos'][treino_selecionado]['exercicios'])}
+            {"".join(f"<li>{ex}</li>" for ex in exercicios_lista)}
         </ul>
         """
     )
