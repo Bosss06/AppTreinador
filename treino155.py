@@ -834,10 +834,18 @@ def pagina_treinos():
             data_treino, detalhes = st.session_state['edit_treino']
             with st.form(key="form_edit_treino"):
                 st.subheader(f"Editar Treino: {data_treino}")
-                hora = st.time_input("Hora", value=datetime.strptime(detalhes['hora'], "%H:%M").time())
-                local = st.text_input("Local", value=detalhes['local'])
-                objetivo = st.text_input("Objetivo", value=detalhes['objetivo'])
-                duracao = st.number_input("Duração (minutos)", value=detalhes['duracao'], min_value=30, max_value=180)
+                # Verificar se existe hora, senão usar valor padrão
+                hora_default = datetime.strptime("09:00", "%H:%M").time()
+                if 'hora' in detalhes and detalhes['hora']:
+                    try:
+                        hora_default = datetime.strptime(detalhes['hora'], "%H:%M").time()
+                    except (ValueError, TypeError):
+                        hora_default = datetime.strptime("09:00", "%H:%M").time()
+                
+                hora = st.time_input("Hora", value=hora_default)
+                local = st.text_input("Local", value=detalhes.get('local', ''))
+                objetivo = st.text_input("Objetivo", value=detalhes.get('objetivo', ''))
+                duracao = st.number_input("Duração (minutos)", value=detalhes.get('duracao', 90), min_value=30, max_value=180)
                 exercicios = st.multiselect("Exercícios", 
                                            detalhes.get('exercicios', []), 
                                            default=detalhes.get('exercicios', []))
@@ -847,6 +855,8 @@ def pagina_treinos():
                 col1, col2 = st.columns(2)
                 with col1:
                     if st.form_submit_button("💾 Salvar Alterações"):
+                        if 'treinos' not in data:
+                            data['treinos'] = {}
                         data['treinos'][data_treino] = {
                             'hora': hora.strftime('%H:%M'),
                             'local': local,
@@ -867,17 +877,17 @@ def pagina_treinos():
     # Notificar jogadores
     st.subheader("📧 Notificar Jogadores sobre Treino")
     
-    if not data['treinos']:
-        st.warning("Nenhum treino agendado para notificar")
+    if not data.get('treinos', {}):
+        st.info("Nenhum treino agendado para notificar.")
         return
     
     treino_selecionado = st.selectbox(
         "Selecione o treino para notificar",
-        options=list(data['treinos'].keys()),
-        format_func=lambda x: f"{data['treinos'][x].get('nome', x)} - {data['treinos'][x].get('objetivo', 'N/A')}"
+        options=list(data.get('treinos', {}).keys()),
+        format_func=lambda x: f"{data.get('treinos', {}).get(x, {}).get('nome', x)} - {data.get('treinos', {}).get(x, {}).get('objetivo', 'N/A')}"
     )
     
-    treino_detalhes = data['treinos'][treino_selecionado]
+    treino_detalhes = data.get('treinos', {}).get(treino_selecionado, {})
     nome_treino = treino_detalhes.get('nome', treino_selecionado)
     
     assunto = st.text_input(
