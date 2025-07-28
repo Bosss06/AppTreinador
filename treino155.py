@@ -18,6 +18,7 @@ from data_manager import DataManager
 import dropbox
 from dropbox import Dropbox
 from dropbox.exceptions import AuthError, ApiError, HttpError
+import requests
 
 # --- Configurações Iniciais ---
 load_dotenv()
@@ -27,6 +28,122 @@ st.set_page_config(
     initial_sidebar_state="expanded"
 )
 logging.basicConfig(level=logging.INFO)
+
+def auto_refresh_dropbox_token():
+    """Tenta renovar automaticamente o token do Dropbox se necessário"""
+    try:
+        import requests
+        
+        refresh_token = os.getenv('DROPBOX_REFRESH_TOKEN')
+        app_key = os.getenv('DROPBOX_APP_KEY')
+        app_secret = os.getenv('DROPBOX_APP_SECRET')
+        
+        if not all([refresh_token, app_key, app_secret]):
+            return False
+            
+        # Fazer requisição para renovar o token
+        auth_url = 'https://api.dropbox.com/oauth2/token'
+        auth_data = {
+            'grant_type': 'refresh_token',
+            'refresh_token': refresh_token,
+            'client_id': app_key,
+            'client_secret': app_secret
+        }
+        
+        response = requests.post(auth_url, data=auth_data)
+        
+        if response.status_code == 200:
+            token_data = response.json()
+            new_access_token = token_data.get('access_token')
+            
+            if new_access_token:
+                # Atualizar a variável de ambiente temporariamente
+                os.environ['DROPBOX_ACCESS_TOKEN'] = new_access_token
+                return True
+                
+    except Exception as e:
+        print(f"Erro ao renovar token Dropbox: {str(e)}")
+        
+    return False
+
+def get_dropbox_client_with_retry():
+    """Obtém cliente Dropbox com tentativa de renovação automática"""
+    try:
+        # Primeira tentativa com token atual
+        token = os.getenv('DROPBOX_ACCESS_TOKEN')
+        if token:
+            dbx = Dropbox(token)
+            # Testar se o token está válido
+            dbx.users_get_current_account()
+            return dbx
+    except AuthError:
+        # Token expirado, tentar renovar
+        if auto_refresh_dropbox_token():
+            try:
+                new_token = os.getenv('DROPBOX_ACCESS_TOKEN')
+                dbx = Dropbox(new_token)
+                # Testar novamente
+                dbx.users_get_current_account()
+                return dbx
+            except:
+                pass
+    except Exception:
+        pass
+    
+    return None
+
+def create_backup_with_auto_retry(local_only=False, dropbox_only=False):
+    """Cria backup com tentativa automática de renovação do token Dropbox"""
+    try:
+        if dropbox_only or not local_only:
+            # Se vai usar Dropbox, garantir que temos cliente válido
+            dbx = get_dropbox_client_with_retry()
+            if not dbx and (dropbox_only or not local_only):
+                if local_only:
+                    return False
+                # Se não conseguiu Dropbox mas não é local_only, tentar só local
+                return DataManager.create_secure_backup(local_only=True)
+        
+        # Usar a função original do DataManager
+        return DataManager.create_secure_backup(local_only=local_only, dropbox_only=dropbox_only)
+        
+    except Exception as e:
+        print(f"Erro ao criar backup: {str(e)}")
+        # Se falhar e não for local_only, tentar backup local
+        if not local_only:
+            try:
+                return DataManager.create_secure_backup(local_only=True)
+            except:
+                pass
+        return False
+
+def list_dropbox_backups_with_retry():
+    """Lista backups do Dropbox com renovação automática do token"""
+    try:
+        dbx = get_dropbox_client_with_retry()
+        if not dbx:
+            return []
+        
+        # Usar a função original do DataManager mas com nosso cliente
+        return DataManager.list_dropbox_backups()
+        
+    except Exception as e:
+        print(f"Erro ao listar backups do Dropbox: {str(e)}")
+        return []
+
+def restore_from_dropbox_with_retry(backup_name, restore_photos=True):
+    """Restaura backup do Dropbox com renovação automática do token"""
+    try:
+        dbx = get_dropbox_client_with_retry()
+        if not dbx:
+            return False
+        
+        # Usar a função original do DataManager
+        return DataManager.restore_from_dropbox(backup_name, restore_photos)
+        
+    except Exception as e:
+        print(f"Erro ao restaurar backup do Dropbox: {str(e)}")
+        return False
 
 # Função para manter a app ativa
 def keep_alive():
@@ -1257,31 +1374,32 @@ def pagina_configuracoes():
     st.title("⚙️ Configurações do Sistema")
     
     # Seção de status do Dropbox
-    st.subheader("📡 Status do Backup")
-    dbx = DataManager.get_dropbox_client()
+    st.subheader("📡 Status do Dropbox")
+    dbx = get_dropbox_client_with_retry()
     
     if not dbx:
-        st.warning("⚠️ Dropbox não configurado - usando apenas backup local")
-        st.info("💡 O sistema funciona normalmente sem Dropbox. Os backups serão salvos localmente.")
+        st.error("❌ Não foi possível conectar ao Dropbox")
+        st.info("💡 Tentativa automática de renovação do token...")
         
-        with st.expander("🔧 Configurar Dropbox (Opcional)", expanded=False):
-            st.write("Se desejar usar backup na nuvem, configure as seguintes variáveis de ambiente:")
+        # Tentar renovação automática
+        if auto_refresh_dropbox_token():
+            st.success("✅ Token renovado automaticamente!")
+            st.rerun()
+        else:
+            st.warning("⚠️ Falha na renovação automática. Configure manualmente:")
             st.code("""
 DROPBOX_ACCESS_TOKEN=seu_access_token
-DROPBOX_REFRESH_TOKEN=seu_refresh_token  (opcional, para renovação automática)
-DROPBOX_APP_KEY=sua_app_key  (opcional, para renovação automática)
-DROPBOX_APP_SECRET=seu_app_secret  (opcional, para renovação automática)
+DROPBOX_REFRESH_TOKEN=seu_refresh_token  (necessário para renovação automática)
+DROPBOX_APP_KEY=sua_app_key  (necessário para renovação automática)
+DROPBOX_APP_SECRET=seu_app_secret  (necessário para renovação automática)
             """)
             
-            if st.button("🔄 Tentar Conectar Dropbox"):
-                if DataManager.refresh_dropbox_token():
+            if st.button("🔄 Tentar Renovar Token"):
+                if auto_refresh_dropbox_token():
                     st.success("✅ Token renovado com sucesso!")
                     st.rerun()
                 else:
-                    st.error("❌ Falha ao conectar ao Dropbox")
-        
-        # Mostrar status do backup local
-        st.success("✅ Sistema de backup local ativo")
+                    st.error("❌ Falha ao renovar token")
     else:
         try:
             account = dbx.users_get_current_account()
@@ -1308,22 +1426,11 @@ DROPBOX_APP_SECRET=seu_app_secret  (opcional, para renovação automática)
     # Backup automático
     col1, col2 = st.columns(2)
     with col1:
-        # Ajustar opções baseado na disponibilidade do Dropbox
-        if dbx:
-            opcoes_backup = ["Local", "Dropbox", "Ambos"]
-            indice_padrao = 2  # Ambos
-        else:
-            opcoes_backup = ["Local"]
-            indice_padrao = 0  # Apenas local
-            
         destino_backup = st.selectbox(
             "Destino do backup",
-            opcoes_backup,
-            index=indice_padrao
+            ["Local", "Dropbox", "Ambos"],
+            index=2  # Padrão: Ambos
         )
-        
-        if not dbx and len(opcoes_backup) == 1:
-            st.info("💡 Apenas backup local disponível")
         
         include_photos = st.checkbox("📷 Incluir fotos dos jogadores", value=True)
     
@@ -1332,11 +1439,11 @@ DROPBOX_APP_SECRET=seu_app_secret  (opcional, para renovação automática)
             with st.spinner("Criando backup completo..."):
                 try:
                     if destino_backup == "Local":
-                        success = DataManager.create_secure_backup(local_only=True)
+                        success = create_backup_with_auto_retry(local_only=True)
                     elif destino_backup == "Dropbox":
-                        success = DataManager.create_secure_backup(dropbox_only=True)
+                        success = create_backup_with_auto_retry(dropbox_only=True)
                     else:  # Ambos
-                        success = DataManager.create_secure_backup()
+                        success = create_backup_with_auto_retry()
                     
                     if success:
                         st.success("✅ Backup criado com sucesso!")
@@ -1352,11 +1459,7 @@ DROPBOX_APP_SECRET=seu_app_secret  (opcional, para renovação automática)
     # Seção de restauração
     st.subheader("🗂️ Restaurar Backup")
     
-    if dbx:
-        tab1, tab2, tab3 = st.tabs(["📁 Upload Manual", "💻 Backup Local", "☁️ Backup Dropbox"])
-    else:
-        tab1, tab2 = st.tabs(["📁 Upload Manual", "💻 Backup Local"])
-        tab3 = None  # Dropbox não disponível
+    tab1, tab2, tab3 = st.tabs(["📁 Upload Manual", "💻 Backup Local", "☁️ Backup Dropbox"])
     
     with tab1:
         st.write("**Restaurar arquivo de backup manualmente**")
@@ -1436,12 +1539,11 @@ DROPBOX_APP_SECRET=seu_app_secret  (opcional, para renovação automática)
         else:
             st.info("ℹ️ Pasta de backups locais não encontrada")
 
-    if tab3:  # Só existe se Dropbox estiver disponível
-        with tab3:
-            st.write("**Restaurar backup do Dropbox**")
-            if dbx:
-                try:
-                    dropbox_backups = DataManager.list_dropbox_backups()
+    with tab3:
+        st.write("**Restaurar backup do Dropbox**")
+        if dbx:
+            try:
+                    dropbox_backups = list_dropbox_backups_with_retry()
                     if dropbox_backups:
                         backup_options = []
                         for backup in dropbox_backups:
@@ -1457,7 +1559,7 @@ DROPBOX_APP_SECRET=seu_app_secret  (opcional, para renovação automática)
                         if st.button("⚠️ Restaurar do Dropbox", type="primary"):
                             with st.spinner("Baixando e restaurando backup do Dropbox..."):
                                 selected_backup = dropbox_backups[selected_idx]
-                                if DataManager.restore_from_dropbox(selected_backup['name'], restore_photos_dropbox):
+                                if restore_from_dropbox_with_retry(selected_backup['name'], restore_photos_dropbox):
                                     st.success("✅ Backup do Dropbox restaurado com sucesso! Recarregue a página.")
                                 else:
                                     st.error("❌ Falha ao restaurar backup do Dropbox")
@@ -1465,8 +1567,8 @@ DROPBOX_APP_SECRET=seu_app_secret  (opcional, para renovação automática)
                         st.info("ℹ️ Nenhum backup encontrado no Dropbox")
                 except Exception as e:
                     st.error(f"❌ Erro ao listar backups do Dropbox: {str(e)}")
-            else:
-                st.warning("⚠️ Dropbox não conectado")
+        else:
+            st.warning("⚠️ Dropbox não conectado")
 
     st.divider()
     
