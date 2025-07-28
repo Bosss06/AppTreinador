@@ -1455,35 +1455,17 @@ DROPBOX_REFRESH_TOKEN={new_refresh_token}
     
     st.divider()
     
-    dbx = get_dropbox_client_with_retry()
+    # Verificação unificada do status Dropbox
+    st.write("**🔍 Teste de Conexão:**")
     
-    if not dbx:
-        st.error("❌ Não foi possível conectar ao Dropbox")
-        st.info("💡 Tentativa automática de renovação do token...")
-        
-        # Tentar renovação automática
-        if auto_refresh_dropbox_token():
-            st.success("✅ Token renovado automaticamente!")
-            st.rerun()
-        else:
-            st.warning("⚠️ Falha na renovação automática. Configure manualmente:")
-            st.code("""
-DROPBOX_ACCESS_TOKEN=seu_access_token
-DROPBOX_REFRESH_TOKEN=seu_refresh_token  (necessário para renovação automática)
-DROPBOX_APP_KEY=sua_app_key  (necessário para renovação automática)
-DROPBOX_APP_SECRET=seu_app_secret  (necessário para renovação automática)
-            """)
-            
-            if st.button("🔄 Tentar Renovar Token"):
-                if auto_refresh_dropbox_token():
-                    st.success("✅ Token renovado com sucesso!")
-                    st.rerun()
-                else:
-                    st.error("❌ Falha ao renovar token")
-    else:
+    with st.spinner("Testando conexão com Dropbox..."):
+        dbx = get_dropbox_client_with_retry()
+    
+    if dbx:
         try:
+            # Testar se a conexão realmente funciona
             account = dbx.users_get_current_account()
-            st.success(f"✅ Conectado ao Dropbox como: **{account.name.display_name}**")
+            st.success(f"✅ **Conectado com sucesso!** Usuário: {account.name.display_name}")
             st.info(f"📧 Email: {account.email}")
             
             # Verificar espaço usado
@@ -1492,12 +1474,30 @@ DROPBOX_APP_SECRET=seu_app_secret  (necessário para renovação automática)
                 used_gb = usage.used / (1024**3)
                 allocated_gb = usage.allocation.get_individual().allocated / (1024**3)
                 st.metric("💾 Espaço Usado", f"{used_gb:.2f} GB / {allocated_gb:.2f} GB")
-            except:
-                pass
+            except Exception as e:
+                st.warning(f"⚠️ Não foi possível obter informações de espaço: {str(e)}")
                 
         except Exception as e:
-            st.error(f"⚠️ Erro na conexão: {str(e)}")
-    
+            st.error(f"❌ Erro na conexão: {str(e)}")
+            st.info("💡 Tentativa automática de renovação do token...")
+            
+            # Tentar renovação automática
+            if auto_refresh_dropbox_token():
+                st.success("✅ Token renovado automaticamente!")
+                st.rerun()
+            else:
+                st.error("❌ Falha na renovação automática")
+    else:
+        st.error("❌ Não foi possível conectar ao Dropbox")
+        st.warning("⚠️ Verifique se todas as variáveis estão configuradas corretamente")
+        
+        if not refresh_token:
+            st.info("💡 **REFRESH_TOKEN ausente** - renovação automática não funcionará")
+        elif not access_token:
+            st.info("💡 **ACCESS_TOKEN ausente** - configure o token inicial")
+        elif not app_key or not app_secret:
+            st.info("💡 **APP_KEY ou APP_SECRET ausentes** - necessários para renovação")
+
     st.divider()
     
     # Seção de backup
