@@ -1257,25 +1257,31 @@ def pagina_configuracoes():
     st.title("⚙️ Configurações do Sistema")
     
     # Seção de status do Dropbox
-    st.subheader("📡 Status do Dropbox")
+    st.subheader("📡 Status do Backup")
     dbx = DataManager.get_dropbox_client()
     
     if not dbx:
-        st.error("❌ Não foi possível conectar ao Dropbox")
-        st.info("💡 Configure as seguintes variáveis de ambiente:")
-        st.code("""
+        st.warning("⚠️ Dropbox não configurado - usando apenas backup local")
+        st.info("💡 O sistema funciona normalmente sem Dropbox. Os backups serão salvos localmente.")
+        
+        with st.expander("🔧 Configurar Dropbox (Opcional)", expanded=False):
+            st.write("Se desejar usar backup na nuvem, configure as seguintes variáveis de ambiente:")
+            st.code("""
 DROPBOX_ACCESS_TOKEN=seu_access_token
 DROPBOX_REFRESH_TOKEN=seu_refresh_token  (opcional, para renovação automática)
 DROPBOX_APP_KEY=sua_app_key  (opcional, para renovação automática)
 DROPBOX_APP_SECRET=seu_app_secret  (opcional, para renovação automática)
-        """)
+            """)
+            
+            if st.button("🔄 Tentar Conectar Dropbox"):
+                if DataManager.refresh_dropbox_token():
+                    st.success("✅ Token renovado com sucesso!")
+                    st.rerun()
+                else:
+                    st.error("❌ Falha ao conectar ao Dropbox")
         
-        if st.button("🔄 Tentar Renovar Token"):
-            if DataManager.refresh_dropbox_token():
-                st.success("✅ Token renovado com sucesso!")
-                st.rerun()
-            else:
-                st.error("❌ Falha ao renovar token")
+        # Mostrar status do backup local
+        st.success("✅ Sistema de backup local ativo")
     else:
         try:
             account = dbx.users_get_current_account()
@@ -1302,11 +1308,22 @@ DROPBOX_APP_SECRET=seu_app_secret  (opcional, para renovação automática)
     # Backup automático
     col1, col2 = st.columns(2)
     with col1:
+        # Ajustar opções baseado na disponibilidade do Dropbox
+        if dbx:
+            opcoes_backup = ["Local", "Dropbox", "Ambos"]
+            indice_padrao = 2  # Ambos
+        else:
+            opcoes_backup = ["Local"]
+            indice_padrao = 0  # Apenas local
+            
         destino_backup = st.selectbox(
             "Destino do backup",
-            ["Local", "Dropbox", "Ambos"],
-            index=2  # Padrão: Ambos
+            opcoes_backup,
+            index=indice_padrao
         )
+        
+        if not dbx and len(opcoes_backup) == 1:
+            st.info("💡 Apenas backup local disponível")
         
         include_photos = st.checkbox("📷 Incluir fotos dos jogadores", value=True)
     
@@ -1335,7 +1352,11 @@ DROPBOX_APP_SECRET=seu_app_secret  (opcional, para renovação automática)
     # Seção de restauração
     st.subheader("🗂️ Restaurar Backup")
     
-    tab1, tab2, tab3 = st.tabs(["📁 Upload Manual", "💻 Backup Local", "☁️ Backup Dropbox"])
+    if dbx:
+        tab1, tab2, tab3 = st.tabs(["📁 Upload Manual", "💻 Backup Local", "☁️ Backup Dropbox"])
+    else:
+        tab1, tab2 = st.tabs(["📁 Upload Manual", "💻 Backup Local"])
+        tab3 = None  # Dropbox não disponível
     
     with tab1:
         st.write("**Restaurar arquivo de backup manualmente**")
@@ -1415,36 +1436,37 @@ DROPBOX_APP_SECRET=seu_app_secret  (opcional, para renovação automática)
         else:
             st.info("ℹ️ Pasta de backups locais não encontrada")
 
-    with tab3:
-        st.write("**Restaurar backup do Dropbox**")
-        if dbx:
-            try:
-                dropbox_backups = DataManager.list_dropbox_backups()
-                if dropbox_backups:
-                    backup_options = []
-                    for backup in dropbox_backups:
-                        size_mb = backup['size'] / (1024*1024)
-                        date_str = backup['modified'].strftime('%Y-%m-%d %H:%M')
-                        backup_options.append(f"{backup['name']} ({date_str}, {size_mb:.1f}MB)")
-                    
-                    selected_idx = st.selectbox("Escolha um backup do Dropbox", range(len(backup_options)), 
-                                              format_func=lambda i: backup_options[i])
-                    
-                    restore_photos_dropbox = st.checkbox("Tentar restaurar fotos também", value=True)
-                    
-                    if st.button("⚠️ Restaurar do Dropbox", type="primary"):
-                        with st.spinner("Baixando e restaurando backup do Dropbox..."):
-                            selected_backup = dropbox_backups[selected_idx]
-                            if DataManager.restore_from_dropbox(selected_backup['name'], restore_photos_dropbox):
-                                st.success("✅ Backup do Dropbox restaurado com sucesso! Recarregue a página.")
-                            else:
-                                st.error("❌ Falha ao restaurar backup do Dropbox")
-                else:
-                    st.info("ℹ️ Nenhum backup encontrado no Dropbox")
-            except Exception as e:
-                st.error(f"❌ Erro ao listar backups do Dropbox: {str(e)}")
-        else:
-            st.warning("⚠️ Dropbox não conectado")
+    if tab3:  # Só existe se Dropbox estiver disponível
+        with tab3:
+            st.write("**Restaurar backup do Dropbox**")
+            if dbx:
+                try:
+                    dropbox_backups = DataManager.list_dropbox_backups()
+                    if dropbox_backups:
+                        backup_options = []
+                        for backup in dropbox_backups:
+                            size_mb = backup['size'] / (1024*1024)
+                            date_str = backup['modified'].strftime('%Y-%m-%d %H:%M')
+                            backup_options.append(f"{backup['name']} ({date_str}, {size_mb:.1f}MB)")
+                        
+                        selected_idx = st.selectbox("Escolha um backup do Dropbox", range(len(backup_options)), 
+                                                  format_func=lambda i: backup_options[i])
+                        
+                        restore_photos_dropbox = st.checkbox("Tentar restaurar fotos também", value=True)
+                        
+                        if st.button("⚠️ Restaurar do Dropbox", type="primary"):
+                            with st.spinner("Baixando e restaurando backup do Dropbox..."):
+                                selected_backup = dropbox_backups[selected_idx]
+                                if DataManager.restore_from_dropbox(selected_backup['name'], restore_photos_dropbox):
+                                    st.success("✅ Backup do Dropbox restaurado com sucesso! Recarregue a página.")
+                                else:
+                                    st.error("❌ Falha ao restaurar backup do Dropbox")
+                    else:
+                        st.info("ℹ️ Nenhum backup encontrado no Dropbox")
+                except Exception as e:
+                    st.error(f"❌ Erro ao listar backups do Dropbox: {str(e)}")
+            else:
+                st.warning("⚠️ Dropbox não conectado")
 
     st.divider()
     
