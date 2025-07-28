@@ -1604,10 +1604,89 @@ DROPBOX_REFRESH_TOKEN={new_refresh_token}
                         st.success("✅ Backup criado com sucesso!")
                         if include_photos:
                             st.info("📷 Fotos incluídas no backup")
+                        
+                        # Mostrar informações do backup criado
+                        st.write("**📍 Informações do Backup:**")
+                        
+                        # Verificar se backups locais foram criados
+                        import os
+                        backup_dir = "backups"
+                        if os.path.exists(backup_dir):
+                            backup_files = [f for f in os.listdir(backup_dir) if f.startswith('backup_') and f.endswith('.json')]
+                            if backup_files:
+                                latest_backup = sorted(backup_files)[-1]
+                                backup_path = os.path.join(backup_dir, latest_backup)
+                                file_size = os.path.getsize(backup_path)
+                                st.info(f"📁 **Backup Local**: {latest_backup} ({file_size:,} bytes)")
+                                st.code(f"Caminho: {os.path.abspath(backup_path)}")
+                            else:
+                                st.warning("⚠️ Nenhum backup local encontrado")
+                        else:
+                            st.warning("⚠️ Pasta 'backups' não existe localmente")
+                        
+                        # Verificar Dropbox
+                        if destino_backup in ["Dropbox", "Ambos"]:
+                            dbx_test = get_dropbox_client_with_retry()
+                            if dbx_test:
+                                try:
+                                    # Listar arquivos na pasta /backups do Dropbox
+                                    result = dbx_test.files_list_folder("/backups")
+                                    dropbox_backups = [entry.name for entry in result.entries if entry.name.startswith('backup_')]
+                                    if dropbox_backups:
+                                        latest_dropbox = sorted(dropbox_backups)[-1]
+                                        st.info(f"☁️ **Backup Dropbox**: {latest_dropbox}")
+                                    else:
+                                        st.warning("⚠️ Nenhum backup encontrado no Dropbox")
+                                except Exception as e:
+                                    st.error(f"❌ Erro ao verificar Dropbox: {str(e)}")
+                            else:
+                                st.warning("⚠️ Não foi possível verificar Dropbox")
+                                
                     else:
                         st.error("❌ Falha ao criar backup")
                 except Exception as e:
                     st.error(f"❌ Erro inesperado: {str(e)}")
+
+    # Seção de download de backup
+    st.write("**💾 Download de Backup Atual**")
+    col1, col2 = st.columns(2)
+    
+    with col1:
+        if st.button("📥 Baixar Backup Atual"):
+            try:
+                # Criar backup temporário para download
+                data = DataManager.load_data()
+                
+                import json
+                from datetime import datetime
+                
+                timestamp = datetime.now().strftime('%Y%m%d_%H%M%S')
+                backup_filename = f"backup_{timestamp}.json"
+                
+                # Criar conteúdo do backup
+                backup_content = json.dumps(data, indent=2, ensure_ascii=False)
+                
+                # Botão de download
+                st.download_button(
+                    label="💾 Fazer Download",
+                    data=backup_content,
+                    file_name=backup_filename,
+                    mime="application/json"
+                )
+                
+                st.success("✅ Backup preparado para download!")
+                
+            except Exception as e:
+                st.error(f"❌ Erro ao preparar backup: {str(e)}")
+    
+    with col2:
+        st.info("""
+        **💡 Como Funciona:**
+        
+        • **Versão Online**: Backups criados no servidor Streamlit Cloud
+        • **Versão Local**: Backups salvos no seu PC
+        • **Download**: Use este botão para baixar dados da versão online
+        """)
 
     st.divider()
 
@@ -1876,3 +1955,4 @@ def main():
 
 if __name__ == "__main__":
     main()
+    
