@@ -1491,12 +1491,87 @@ DROPBOX_REFRESH_TOKEN={new_refresh_token}
         st.error("❌ Não foi possível conectar ao Dropbox")
         st.warning("⚠️ Verifique se todas as variáveis estão configuradas corretamente")
         
+        # Diagnóstico detalhado
+        st.write("**🔍 Diagnóstico Detalhado:**")
+        
         if not refresh_token:
             st.info("💡 **REFRESH_TOKEN ausente** - renovação automática não funcionará")
         elif not access_token:
             st.info("💡 **ACCESS_TOKEN ausente** - configure o token inicial")
         elif not app_key or not app_secret:
             st.info("💡 **APP_KEY ou APP_SECRET ausentes** - necessários para renovação")
+        else:
+            # Todas as variáveis existem, mas conexão falha
+            st.warning("🚨 **Todas as variáveis estão configuradas, mas a conexão falha**")
+            
+            # Testar cada token individualmente
+            st.write("**🧪 Teste Individual dos Tokens:**")
+            
+            # Teste 1: Access Token direto
+            try:
+                test_dbx = Dropbox(access_token)
+                test_account = test_dbx.users_get_current_account()
+                st.success(f"✅ ACCESS_TOKEN válido: {test_account.name.display_name}")
+            except AuthError as e:
+                st.error(f"❌ ACCESS_TOKEN inválido/expirado: {str(e)}")
+                
+                # Teste 2: Tentar renovação manual
+                st.info("🔄 Tentando renovar token...")
+                try:
+                    import requests
+                    
+                    token_url = "https://api.dropbox.com/oauth2/token"
+                    token_data = {
+                        'grant_type': 'refresh_token',
+                        'refresh_token': refresh_token,
+                        'client_id': app_key,
+                        'client_secret': app_secret
+                    }
+                    
+                    response = requests.post(token_url, data=token_data)
+                    
+                    if response.status_code == 200:
+                        token_result = response.json()
+                        new_token = token_result.get('access_token')
+                        st.success("✅ Token renovado com sucesso!")
+                        st.info("💡 **Problema identificado**: TOKEN expirado, mas renovação funciona")
+                        st.warning("🔧 **Solução**: Configure o novo token no Streamlit Cloud:")
+                        st.code(f"DROPBOX_ACCESS_TOKEN={new_token}")
+                        
+                    else:
+                        st.error(f"❌ Falha na renovação: {response.text}")
+                        if "invalid_grant" in response.text:
+                            st.error("🚨 **REFRESH_TOKEN inválido** - precisa gerar novos tokens")
+                        elif "invalid_client" in response.text:
+                            st.error("🚨 **APP_KEY/APP_SECRET inválidos** - verifique as credenciais da app")
+                            
+                except Exception as e:
+                    st.error(f"❌ Erro na renovação: {str(e)}")
+                    
+            except Exception as e:
+                st.error(f"❌ Erro de conexão: {str(e)}")
+                if "network" in str(e).lower() or "timeout" in str(e).lower():
+                    st.warning("🌐 **Problema de rede** - verifique a conexão com a internet")
+                    
+            # Teste 3: Verificar formato dos tokens
+            st.write("**📋 Verificação de Formato:**")
+            if access_token:
+                if access_token.startswith('sl.'):
+                    st.success("✅ ACCESS_TOKEN tem formato correto (sl.)")
+                else:
+                    st.warning("⚠️ ACCESS_TOKEN pode ter formato incorreto")
+            
+            if refresh_token:
+                if len(refresh_token) > 20:
+                    st.success("✅ REFRESH_TOKEN tem tamanho adequado")
+                else:
+                    st.warning("⚠️ REFRESH_TOKEN pode estar incompleto")
+                    
+            if app_key and app_secret:
+                if len(app_key) > 10 and len(app_secret) > 10:
+                    st.success("✅ APP_KEY e APP_SECRET têm tamanho adequado")
+                else:
+                    st.warning("⚠️ APP_KEY ou APP_SECRET podem estar incorretos")
 
     st.divider()
     
