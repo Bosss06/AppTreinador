@@ -19,6 +19,7 @@ import dropbox
 from dropbox import Dropbox
 from dropbox.exceptions import AuthError, ApiError, HttpError
 import requests
+import calendar
 
 # --- Configurações Iniciais ---
 load_dotenv()
@@ -144,6 +145,222 @@ def restore_from_dropbox_with_retry(backup_name, restore_photos=True):
     except Exception as e:
         print(f"Erro ao restaurar backup do Dropbox: {str(e)}")
         return False
+
+def pagina_calendario_treinos():
+    """Página de calendário de treinos para visualização mensal e semanal"""
+    st.title("📅 Calendário de Treinos")
+    
+    data = DataManager.load_data()
+    treinos = data.get('treinos', {})
+    
+    if not treinos:
+        st.info("📅 Nenhum treino agendado")
+        return
+    
+    # Filtro por jogador (se não for treinador)
+    is_treinador = st.session_state.get('tipo_usuario') == 'treinador'
+    jogador_info = st.session_state.get('jogador_info', {})
+    jogador_nome = jogador_info.get('nome') if not is_treinador else None
+    
+    # Seleção do mês/ano
+    col1, col2, col3 = st.columns([2, 2, 3])
+    
+    with col1:
+        ano_atual = datetime.now().year
+        ano = st.selectbox("Ano", range(ano_atual - 1, ano_atual + 2), index=1)
+    
+    with col2:
+        mes_atual = datetime.now().month
+        meses = ['Janeiro', 'Fevereiro', 'Março', 'Abril', 'Maio', 'Junho',
+                'Julho', 'Agosto', 'Setembro', 'Outubro', 'Novembro', 'Dezembro']
+        mes_nome = st.selectbox("Mês", meses, index=mes_atual - 1)
+        mes = meses.index(mes_nome) + 1
+    
+    with col3:
+        view_type = st.radio("Visualização", ["📅 Mensal", "📊 Semanal"], horizontal=True)
+    
+    # Filtrar treinos do mês/ano selecionado
+    treinos_filtrados = {}
+    for data_treino, detalhes in treinos.items():
+        try:
+            # Verificar se é uma data válida (formato YYYY-MM-DD)
+            if len(data_treino) == 10 and data_treino.count('-') == 2:
+                treino_date = datetime.strptime(data_treino, '%Y-%m-%d')
+                if treino_date.year == ano and treino_date.month == mes:
+                    # Se for jogador, filtrar apenas treinos onde está convocado
+                    if not is_treinador:
+                        participantes = detalhes.get('participantes', [])
+                        if jogador_nome in participantes:
+                            treinos_filtrados[data_treino] = detalhes
+                    else:
+                        treinos_filtrados[data_treino] = detalhes
+        except ValueError:
+            # Ignorar entradas que não são datas válidas (como UUIDs)
+            continue
+    
+    if view_type == "📅 Mensal":
+        exibir_calendario_mensal(ano, mes, treinos_filtrados)
+    else:
+        exibir_calendario_semanal(ano, mes, treinos_filtrados)
+
+def exibir_calendario_mensal(ano, mes, treinos):
+    """Exibe calendário mensal com treinos"""
+    st.subheader(f"📅 {calendar.month_name[mes]} {ano}")
+    
+    # Obter calendário do mês
+    cal = calendar.monthcalendar(ano, mes)
+    dias_semana = ['Seg', 'Ter', 'Qua', 'Qui', 'Sex', 'Sáb', 'Dom']
+    
+    # Cabeçalho dos dias da semana
+    cols = st.columns(7)
+    for i, dia in enumerate(dias_semana):
+        cols[i].markdown(f"**{dia}**")
+    
+    # Exibir calendário
+    for semana in cal:
+        cols = st.columns(7)
+        for i, dia in enumerate(semana):
+            if dia == 0:
+                cols[i].write("")  # Dias vazios
+            else:
+                data_str = f"{ano}-{mes:02d}-{dia:02d}"
+                
+                if data_str in treinos:
+                    # Dia com treino
+                    treino = treinos[data_str]
+                    objetivo = treino.get('objetivo', 'Treino')
+                    hora = treino.get('hora', '')
+                    
+                    # Determinar cor baseada no tipo de treino
+                    cor = get_cor_treino(objetivo)
+                    
+                    with cols[i].container():
+                        st.markdown(f"""
+                        <div style="
+                            background-color: {cor}; 
+                            padding: 8px; 
+                            border-radius: 5px; 
+                            margin: 2px 0;
+                            border: 1px solid #ddd;
+                        ">
+                            <strong>{dia}</strong><br>
+                            <small>{hora}</small><br>
+                            <small>{objetivo[:15]}...</small>
+                        </div>
+                        """, unsafe_allow_html=True)
+                        
+                        # Expandir detalhes do treino
+                        if st.button(f"Ver", key=f"treino_{data_str}"):
+                            exibir_detalhes_treino(data_str, treino)
+                else:
+                    # Dia sem treino
+                    cols[i].markdown(f"""
+                    <div style="
+                        padding: 8px; 
+                        text-align: center;
+                        color: #888;
+                    ">
+                        {dia}
+                    </div>
+                    """, unsafe_allow_html=True)
+
+def exibir_calendario_semanal(ano, mes, treinos):
+    """Exibe calendário semanal detalhado"""
+    st.subheader(f"📊 Vista Semanal - {calendar.month_name[mes]} {ano}")
+    
+    # Agrupar treinos por semana
+    treinos_por_semana = {}
+    for data_str, treino in treinos.items():
+        data_obj = datetime.strptime(data_str, '%Y-%m-%d')
+        semana = data_obj.isocalendar()[1]  # Número da semana
+        
+        if semana not in treinos_por_semana:
+            treinos_por_semana[semana] = []
+        treinos_por_semana[semana].append((data_str, treino))
+    
+    if not treinos_por_semana:
+        st.info("📅 Nenhum treino agendado para este mês")
+        return
+    
+    # Exibir cada semana
+    for semana in sorted(treinos_por_semana.keys()):
+        treinos_semana = sorted(treinos_por_semana[semana])
+        
+        st.write(f"**Semana {semana}**")
+        
+        for data_str, treino in treinos_semana:
+            data_obj = datetime.strptime(data_str, '%Y-%m-%d')
+            dia_semana = data_obj.strftime('%A')
+            data_formatada = data_obj.strftime('%d/%m/%Y')
+            
+            # Traduzir dia da semana
+            dias_pt = {
+                'Monday': 'Segunda-feira', 'Tuesday': 'Terça-feira', 
+                'Wednesday': 'Quarta-feira', 'Thursday': 'Quinta-feira',
+                'Friday': 'Sexta-feira', 'Saturday': 'Sábado', 'Sunday': 'Domingo'
+            }
+            dia_semana_pt = dias_pt.get(dia_semana, dia_semana)
+            
+            with st.expander(f"🏃 {dia_semana_pt}, {data_formatada} - {treino.get('objetivo', 'Treino')}"):
+                col1, col2 = st.columns(2)
+                
+                with col1:
+                    st.write(f"**⏰ Hora:** {treino.get('hora', 'Não definida')}")
+                    st.write(f"**📍 Local:** {treino.get('local', 'Não definido')}")
+                    st.write(f"**⏱️ Duração:** {treino.get('duracao', 90)} minutos")
+                
+                with col2:
+                    st.write(f"**🎯 Objetivo:** {treino.get('objetivo', 'Não definido')}")
+                    
+                    participantes = treino.get('participantes', [])
+                    if participantes:
+                        st.write(f"**👥 Participantes:** {len(participantes)}")
+                        with st.expander("Ver lista"):
+                            for p in participantes:
+                                st.write(f"• {p}")
+                
+                # Exercícios
+                exercicios = treino.get('exercicios', [])
+                if exercicios:
+                    st.write("**🏋️ Exercícios:**")
+                    if isinstance(exercicios[0], dict):
+                        # Exercícios detalhados (como Treino Nº 6)
+                        for ex in exercicios:
+                            st.write(f"• **{ex.get('nome', 'Exercício')}** ({ex.get('duracao', 0)} min)")
+                            if ex.get('descricao'):
+                                st.write(f"  _{ex.get('descricao')}_")
+                    else:
+                        # Lista simples de exercícios
+                        for ex in exercicios:
+                            st.write(f"• {ex}")
+        
+        st.divider()
+
+def get_cor_treino(objetivo):
+    """Retorna cor baseada no tipo de treino"""
+    objetivo_lower = objetivo.lower()
+    
+    if 'físico' in objetivo_lower or 'resistência' in objetivo_lower:
+        return '#ffebee'  # Vermelho claro
+    elif 'técnica' in objetivo_lower or 'técnico' in objetivo_lower:
+        return '#e8f5e8'  # Verde claro  
+    elif 'tático' in objetivo_lower or 'tática' in objetivo_lower:
+        return '#e3f2fd'  # Azul claro
+    elif 'jogo' in objetivo_lower:
+        return '#fff3e0'  # Laranja claro
+    else:
+        return '#f5f5f5'  # Cinza claro
+
+def exibir_detalhes_treino(data_str, treino):
+    """Exibe detalhes completos do treino em modal"""
+    data_obj = datetime.strptime(data_str, '%Y-%m-%d')
+    data_formatada = data_obj.strftime('%d/%m/%Y')
+    
+    st.info(f"**Treino de {data_formatada}**")
+    st.write(f"**Objetivo:** {treino.get('objetivo', 'Não definido')}")
+    st.write(f"**Hora:** {treino.get('hora', 'Não definida')}")
+    st.write(f"**Local:** {treino.get('local', 'Não definido')}")
+    st.write(f"**Duração:** {treino.get('duracao', 90)} minutos")
 
 # Função para manter a app ativa
 def keep_alive():
@@ -1868,7 +2085,8 @@ def get_menu_options(user_type):
             "🏠 Dashboard": pagina_dashboard,
             "👥 Jogadores": pagina_jogadores,
             "📅 Treinos": pagina_treinos,
-            "📋 Plano de Treino": pagina_plano_treino,
+            "� Calendário": pagina_calendario_treinos,
+            "�📋 Plano de Treino": pagina_plano_treino,
             "⚽ Jogos": pagina_jogos,
             "📐 Táticas": pagina_taticas,
             "📊 Relatórios": pagina_relatorios,
@@ -1878,6 +2096,7 @@ def get_menu_options(user_type):
             "🏠 Dashboard": pagina_dashboard,
             "👥 Jogadores": pagina_jogadores,
             "📅 Treinos": pagina_treinos,
+            "📆 Calendário": pagina_calendario_treinos,
             "📋 Plano de Treino": pagina_plano_treino,
             "⚽ Jogos": pagina_jogos,
             "📐 Táticas": pagina_taticas,
@@ -1886,6 +2105,7 @@ def get_menu_options(user_type):
         },
         "jogador": {
             "🏠 Meu Perfil": pagina_perfil_jogador,
+            "📆 Calendário": pagina_calendario_treinos,
             "👥 Jogadores": pagina_jogadores
         }
     }.get(user_type, {"🏠 Meu Perfil": pagina_perfil_jogador})
