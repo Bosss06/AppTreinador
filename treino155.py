@@ -18,11 +18,117 @@ from data_manager import DataManager
 import dropbox
 from dropbox import Dropbox
 from dropbox.exceptions import AuthError, ApiError, HttpError
+import calendar
+
+# === CONFIGURAÇÃO PARA STREAMLIT CLOUD ===
+def ensure_directories():
+    """Garante que as pastas essenciais existem (importante para Streamlit Cloud)"""
+    directories = ["data", "data/fotos", "backups", "data/backups"]
+    for directory in directories:
+        os.makedirs(directory, exist_ok=True)
+    
+    # Para Streamlit Cloud: verificar se fotos placeholder existem
+    fotos_dir = "data/fotos"
+    fotos_esperadas = [
+        "fabio.png", "rafa.png", "freitas.png", "gui.png", "dani.png",
+        "cardoso.png", "moura.png", "oliveira.png", "joel.png", "rsilva.png"
+    ]
+    
+    for foto in fotos_esperadas:
+        foto_path = os.path.join(fotos_dir, foto)
+        if not os.path.exists(foto_path):
+            # Criar placeholder mínimo
+            try:
+                with open(foto_path, 'w', encoding='utf-8') as f:
+                    f.write(f"# Placeholder para {foto} - gerado automaticamente\n")
+            except:
+                pass  # Falha silenciosa para evitar crash
+
+# Executar configuração inicial
+ensure_directories()
+
+# === FUNÇÃO PARA CORRIGIR PROBLEMAS DE CODIFICAÇÃO ===
+def fix_env_encoding():
+    """Corrige problemas de codificação no arquivo .env"""
+    env_file = ".env"
+    if os.path.exists(env_file):
+        try:
+            # Tentar ler com UTF-8
+            with open(env_file, 'r', encoding='utf-8') as f:
+                content = f.read()
+            return True
+        except UnicodeDecodeError:
+            try:
+                # Tentar ler com codificação Windows
+                with open(env_file, 'r', encoding='latin-1') as f:
+                    content = f.read()
+                
+                # Reescrever em UTF-8
+                with open(env_file, 'w', encoding='utf-8') as f:
+                    # Remover caracteres problemáticos
+                    clean_content = content.replace('ç', 'c').replace('ã', 'a').replace('õ', 'o')
+                    f.write(clean_content)
+                
+                st.success("✅ Arquivo .env corrigido para UTF-8")
+                return True
+            except Exception as e:
+                st.error(f"❌ Erro ao corrigir .env: {str(e)}")
+                return False
+    return True
+
+# Executar correção na inicialização
+fix_env_encoding()
+
+# === FUNÇÕES ESPECÍFICAS PARA STREAMLIT CLOUD ===
+def is_streamlit_cloud():
+    """Detecta se está rodando no Streamlit Cloud"""
+    return os.getenv('STREAMLIT_SHARING_MODE') == 'true' or 'streamlit.app' in os.getenv('HOSTNAME', '')
+
+def create_cloud_safe_backup():
+    """Cria backup otimizado para Streamlit Cloud"""
+    try:
+        # No Streamlit Cloud, priorizar backup no Dropbox
+        if is_streamlit_cloud():
+            st.info("🌐 Detectado Streamlit Cloud - Priorizando backup no Dropbox")
+            return DataManager.create_secure_backup(dropbox_only=True)
+        else:
+            # Localmente, usar backup normal
+            return DataManager.create_secure_backup()
+    except Exception as e:
+        st.error(f"❌ Erro no backup: {str(e)}")
+        return False
+
+def handle_photos_for_cloud():
+    """Garante que fotos existem para backup no Streamlit Cloud"""
+    fotos_dir = "data/fotos"
+    if not os.path.exists(fotos_dir):
+        os.makedirs(fotos_dir, exist_ok=True)
+    
+    # Verificar se há fotos reais ou placeholders
+    photos = [f for f in os.listdir(fotos_dir) if f.lower().endswith(('.png', '.jpg', '.jpeg'))]
+    
+    if not photos:
+        st.warning("⚠️ Nenhuma foto encontrada. Criando estrutura básica...")
+        ensure_directories()  # Re-executar para criar placeholders
+        return False
+    
+    return True
 import requests
 import calendar
 
 # --- Configurações Iniciais ---
-load_dotenv()
+# Carregar variáveis de ambiente com tratamento de erro
+try:
+    load_dotenv()
+except UnicodeDecodeError:
+    # Se houver erro de codificação no .env, tentar recriar
+    st.warning("⚠️ Problema de codificação no arquivo .env detectado. Reconfiguração necessária.")
+    # Continuar sem .env - usar variáveis de ambiente do sistema
+    pass
+except Exception as e:
+    st.error(f"❌ Erro ao carregar .env: {str(e)}")
+    pass
+
 st.set_page_config(
     page_title="App do Treinador PRO ⚽", 
     layout="wide",
@@ -94,8 +200,15 @@ def get_dropbox_client_with_retry():
     return None
 
 def create_backup_with_auto_retry(local_only=False, dropbox_only=False):
-    """Cria backup com tentativa automática de renovação do token Dropbox"""
+    """Cria backup com tentativa automática de renovação do token Dropbox - Otimizado para Cloud"""
     try:
+        # Para Streamlit Cloud: garantir estrutura de fotos
+        if is_streamlit_cloud():
+            handle_photos_for_cloud()
+            # No cloud, priorizar Dropbox se não especificado local_only
+            if not local_only:
+                dropbox_only = True
+        
         if dropbox_only or not local_only:
             # Se vai usar Dropbox, garantir que temos cliente válido
             dbx = get_dropbox_client_with_retry()
@@ -111,7 +224,7 @@ def create_backup_with_auto_retry(local_only=False, dropbox_only=False):
     except Exception as e:
         print(f"Erro ao criar backup: {str(e)}")
         # Se falhar e não for local_only, tentar backup local
-        if not local_only:
+        if not local_only and not is_streamlit_cloud():
             try:
                 return DataManager.create_secure_backup(local_only=True)
             except:
@@ -435,12 +548,18 @@ class Authentication:
     
     def login(self, username: str, password: str) -> bool:
         try:
-        # Verifica admin
+            # Debug: mostrar tentativa de login
+            logging.info(f"Tentativa de login: {username}")
+            
+            # Verifica admin
             admin_user = os.getenv('ADMIN_USER')
             admin_hash = os.getenv('ADMIN_PASSWORD_HASH')
+            
+            logging.info(f"Admin configurado: {admin_user}, Hash existe: {bool(admin_hash)}")
         
             if username == admin_user and admin_hash:
                 if bcrypt.checkpw(password.encode('utf-8'), admin_hash.encode('utf-8')):
+                    logging.info(f"Login admin bem-sucedido: {username}")
                     st.session_state.update({
                         'autenticado': True,
                         'tipo_usuario': 'treinador',
@@ -448,13 +567,20 @@ class Authentication:
                         'jogador_info': None
                     })
                     return True
+                else:
+                    logging.warning(f"Senha incorreta para admin: {username}")
 
             # Verifica jogadores
             data = DataManager.load_data()
-            for jogador in data.get('jogadores', []):
+            jogadores_com_senha = [j for j in data.get('jogadores', []) if j.get('senha_hash')]
+            logging.info(f"Jogadores com senha configurada: {len(jogadores_com_senha)}")
+            
+            for jogador in jogadores_com_senha:
                 login_jogador = jogador.get('login', jogador['nome'].lower().replace(' ', '_'))
-                if login_jogador.lower() == username.lower() and jogador.get('senha_hash'):
+                if login_jogador.lower() == username.lower():
+                    logging.info(f"Jogador encontrado: {jogador['nome']} (login: {login_jogador})")
                     if bcrypt.checkpw(password.encode('utf-8'), jogador['senha_hash'].encode('utf-8')):
+                        logging.info(f"Login jogador bem-sucedido: {username}")
                         st.session_state.update({
                             'autenticado': True,
                             'tipo_usuario': jogador.get('tipo', 'jogador'),
@@ -462,9 +588,14 @@ class Authentication:
                             'jogador_info': jogador
                         })
                         return True
+                    else:
+                        logging.warning(f"Senha incorreta para jogador: {username}")
+                        
+            logging.warning(f"Usuário não encontrado: {username}")
             return False
         except Exception as e:
             logging.error(f"Erro na autenticação: {str(e)}")
+            return False
             return False
 
 class PDFGenerator:
@@ -618,9 +749,18 @@ class UIComponents:
         col1, col2 = st.columns([1, 3])
         
         with col1:
+            foto_valida = False
             if jogador.get('foto') and os.path.exists(jogador['foto']):
-                st.image(jogador['foto'], use_container_width=True)
-            else:
+                try:
+                    # Verificar se é uma imagem válida
+                    with Image.open(jogador['foto']) as img:
+                        foto_valida = True
+                        st.image(jogador['foto'], use_container_width=True)
+                except (IOError, OSError, Exception):
+                    # Se não conseguir abrir a imagem, usar avatar padrão
+                    foto_valida = False
+            
+            if not foto_valida:
                 avatar_url = f"https://ui-avatars.com/api/?name={jogador['nome'].replace(' ', '+')}&size=150"
                 st.image(avatar_url, use_container_width=True)
         
@@ -702,8 +842,18 @@ class UIComponents:
                 with cols[0]:
                     nome = st.text_input("Nome Completo*", value=dados['nome'])
                     login = st.text_input("Login* (sem espaços)", value=dados['login'], disabled=modo_edicao)
-                    posicao = st.selectbox("Posição*", ["Guarda-Redes", "Defesa", "Meio-Campo", "Adjunto", "Ataque"],
-                                         index=["Guarda-Redes", "Defesa", "Meio-Campo", "Ataque"].index(dados['posicao']))
+                    
+                    # Lista completa de posições incluindo "Adjunto"
+                    posicoes_disponiveis = ["Guarda-Redes", "Defesa", "Meio-Campo", "Adjunto", "Ataque"]
+                    
+                    # Determinar índice da posição atual
+                    try:
+                        posicao_index = posicoes_disponiveis.index(dados['posicao'])
+                    except ValueError:
+                        # Se a posição não estiver na lista, usar Meio-Campo como padrão
+                        posicao_index = 2  # Meio-Campo
+                    
+                    posicao = st.selectbox("Posição*", posicoes_disponiveis, index=posicao_index)
                     numero = st.number_input("Nº Camisola", value=dados['nr_camisola'], min_value=1, max_value=99)
                     altura = st.number_input("Altura (m)*", value=dados['altura'], min_value=1.50, max_value=2.20, step=0.01)
                 
@@ -722,35 +872,36 @@ class UIComponents:
                 )
 
                 # Só mostra campo de senha para novo jogador
-            
                 if not modo_edicao:
-                        senha = st.text_input("Senha*", type="password")
+                    senha = st.text_input("Senha*", type="password")
                 else:
-                        nova_senha = st.text_input("Nova Senha (opcional)", type="password")
-                        if nova_senha:
-                            if st.form_submit_button("🔑 Resetar Senha"):
-                                if resetar_senha_jogador(login, nova_senha):
-                                    st.success("Senha redefinida com sucesso!")
-                                    st.rerun()
-                                else:
-                                    st.error("Erro ao redefinir senha.") 
+                    nova_senha = st.text_input("Nova Senha (opcional)", type="password")
+                    # Nota: Reset de senha será feito após salvar se necessário
 
                 # Botões de ação
                 col1, col2 = st.columns(2)
                 with col1:
                     submitted = st.form_submit_button("💾 Salvar")
                 with col2:
-                    if st.form_submit_button("❌ Cancelar"):
-                        if 'edit_player' in st.session_state:
-                            del st.session_state['edit_player']
-                        st.rerun()
+                    cancelar = st.form_submit_button("❌ Cancelar")
+
+                # Processar cancelamento
+                if cancelar:
+                    if 'edit_player' in st.session_state:
+                        del st.session_state['edit_player']
+                    st.rerun()
 
                 if submitted:
+                    # Validar campos obrigatórios
                     campos_obrigatorios = [nome, login, posicao, idade, altura, peso, ultimo_clube, telefone, email]
+                    if not modo_edicao:
+                        campos_obrigatorios.append(senha)
+                    
                     if not all(campos_obrigatorios):
                         st.error("Preencha todos os campos obrigatórios (*)")
                     else:
                         try:
+                            # Preparar dados do jogador
                             novo_jogador = {
                                 "id": dados['id'],  # Mantém o ID existente ou usa o novo
                                 "tipo": tipo_usuario,
@@ -765,10 +916,22 @@ class UIComponents:
                                 "telefone": telefone,
                                 "email": email,
                                 "pontos_fortes": pontos_fortes,
-                                "senha_hash": dados['senha_hash'] if modo_edicao else Authentication().hash_password(senha),
                                 "foto": dados['foto']
                             }
+                            
+                            # Gerenciar senha
+                            if modo_edicao:
+                                if nova_senha:
+                                    # Se uma nova senha foi fornecida, hash ela
+                                    novo_jogador["senha_hash"] = Authentication().hash_password(nova_senha)
+                                else:
+                                    # Manter senha existente
+                                    novo_jogador["senha_hash"] = dados['senha_hash']
+                            else:
+                                # Novo jogador, hash a senha fornecida
+                                novo_jogador["senha_hash"] = Authentication().hash_password(senha)
 
+                            # Processar foto se fornecida
                             if foto:
                                 os.makedirs("data/fotos", exist_ok=True)
                                 img = ImageOps.fit(Image.open(foto), (300, 300))
@@ -776,6 +939,7 @@ class UIComponents:
                                 img.save(foto_path)
                                 novo_jogador["foto"] = foto_path
 
+                            # Salvar no banco de dados
                             data = DataManager.load_data()
                             if modo_edicao:
                                 for i, j in enumerate(data.get('jogadores', [])):
@@ -788,14 +952,22 @@ class UIComponents:
                                 data['jogadores'].append(novo_jogador)
 
                             if DataManager.save_data(data):
-                                st.success("Jogador salvo com sucesso!")
+                                if modo_edicao and nova_senha:
+                                    st.success("Jogador atualizado e senha redefinida com sucesso!")
+                                else:
+                                    st.success("Jogador salvo com sucesso!")
+                                
                                 time.sleep(1)
                                 if 'edit_player' in st.session_state:
                                     del st.session_state['edit_player']
                                 st.rerun()
+                            else:
+                                st.error("Erro ao salvar dados")
 
                         except Exception as e:
                             st.error(f"Erro ao salvar: {str(e)}")
+                            import traceback
+                            st.error(traceback.format_exc())
 
         except Exception as e:
             st.error(f"Erro inesperado no formulário: {str(e)}")
@@ -835,19 +1007,48 @@ def pagina_login():
     st.title("🔐 Acesso Restrito")
     auth = Authentication()
     
+    # Debug de credenciais (só mostrar se não autenticado)
+    if not st.session_state.get('autenticado', False):
+        with st.expander("🔍 Debug - Credenciais Disponíveis", expanded=False):
+            st.info("**CREDENCIAIS DE TESTE:**")
+            st.code("""
+ADMIN/TREINADOR:
+   Usuário: admin
+   Senha: 123456
+
+JOGADORES EXEMPLO:
+   fabio / [senha configurada]
+   rafa / [senha configurada] 
+   freitas / [senha configurada]
+   
+TREINADORES ADJUNTOS:
+   nuno / [senha configurada]
+   joel / [senha configurada]
+            """)
+            st.warning("⚠️ Se não souber a senha dos jogadores, use 'admin' para acessar e resetar")
+    
     with st.form("login_form"):
         username = st.text_input("Usuário (Login)")
         password = st.text_input("Senha", type="password")
         
         if st.form_submit_button("Entrar"):
             if auth.login(username, password):
+                st.success("✅ Login realizado com sucesso!")
                 st.rerun()
             else:
-                st.error("Credenciais inválidas")
+                st.error("❌ Credenciais inválidas")
+                st.info("💡 Verifique as credenciais no painel de debug acima")
 
 def pagina_dashboard():
     """Página inicial do sistema"""
     st.title("📊 Dashboard do Treinador" if st.session_state.get('tipo_usuario') == 'treinador' else "📋 Meu Painel")
+    
+    # Indicador de ambiente (importante para debug)
+    if is_streamlit_cloud():
+        st.info("🌐 **Executando no Streamlit Cloud** - Backups priorizados no Dropbox")
+    else:
+        st.success("💻 **Executando localmente** - Backup local + Dropbox disponível")
+    
     data = DataManager.load_data()
     
     # Métricas
@@ -1180,33 +1381,81 @@ def pagina_treinos():
                 local = st.text_input("Local", value=detalhes.get('local', ''))
                 objetivo = st.text_input("Objetivo", value=detalhes.get('objetivo', ''))
                 duracao = st.number_input("Duração (minutos)", value=detalhes.get('duracao', 90), min_value=30, max_value=180)
+                
+                # Exercícios disponíveis
+                exercicios_disponiveis = []
+                if 'exercicios' in data and data['exercicios']:
+                    for categoria, exercs in data['exercicios'].items():
+                        for exerc, duracao_ex in exercs.items():
+                            exercicios_disponiveis.append(f"{categoria}: {exerc}")
+                else:
+                    exercicios_disponiveis = [
+                        "Técnica: Controle de bola",
+                        "Técnica: Passe e receção", 
+                        "Técnica: Finalização",
+                        "Física: Corrida contínua",
+                        "Física: Sprint",
+                        "Física: Resistência",
+                        "Tática: Posicionamento",
+                        "Tática: Marcação",
+                        "Tática: Construção de jogo"
+                    ]
+                
+                # Filtrar exercícios existentes
+                exercicios_atuais = detalhes.get('exercicios', [])
+                exercicios_validos = [ex for ex in exercicios_atuais if ex in exercicios_disponiveis]
+                
                 exercicios = st.multiselect("Exercícios", 
-                                           detalhes.get('exercicios', []), 
-                                           default=detalhes.get('exercicios', []))
+                                           exercicios_disponiveis, 
+                                           default=exercicios_validos)
+                
+                # Participantes - filtrar apenas nomes válidos
+                nomes_jogadores = [j['nome'] for j in data.get('jogadores', [])]
+                participantes_atuais = detalhes.get('participantes', [])
+                
+                # Filtrar participantes válidos
+                participantes_validos = []
+                for participante in participantes_atuais:
+                    if participante in nomes_jogadores:
+                        participantes_validos.append(participante)
+                    else:
+                        # Tentar encontrar jogador similar
+                        for nome_jogador in nomes_jogadores:
+                            if participante.lower() in nome_jogador.lower() or nome_jogador.lower().startswith(participante.lower()):
+                                participantes_validos.append(nome_jogador)
+                                break
+                
                 participantes = st.multiselect("Participantes", 
-                                              [j['nome'] for j in data.get('jogadores', [])], 
-                                              default=detalhes.get('participantes', []))
+                                              nomes_jogadores, 
+                                              default=participantes_validos)
+                
                 col1, col2 = st.columns(2)
                 with col1:
-                    if st.form_submit_button("💾 Salvar Alterações"):
-                        if 'treinos' not in data:
-                            data['treinos'] = {}
-                        data['treinos'][data_treino] = {
-                            'hora': hora.strftime('%H:%M'),
-                            'local': local,
-                            'objetivo': objetivo,
-                            'duracao': duracao,
-                            'exercicios': exercicios,
-                            'participantes': participantes
-                        }
-                        DataManager.save_data(data)
+                    salvar = st.form_submit_button("💾 Salvar Alterações")
+                with col2:
+                    cancelar = st.form_submit_button("❌ Cancelar")
+                
+                if salvar:
+                    if 'treinos' not in data:
+                        data['treinos'] = {}
+                    data['treinos'][data_treino] = {
+                        'hora': hora.strftime('%H:%M'),
+                        'local': local,
+                        'objetivo': objetivo,
+                        'duracao': duracao,
+                        'exercicios': exercicios,
+                        'participantes': participantes
+                    }
+                    if DataManager.save_data(data):
                         del st.session_state['edit_treino']
                         st.success("Treino editado com sucesso!")
                         st.rerun()
-                with col2:
-                    if st.form_submit_button("❌ Cancelar"):
-                        del st.session_state['edit_treino']
-                        st.rerun()
+                    else:
+                        st.error("Erro ao salvar treino")
+                        
+                if cancelar:
+                    del st.session_state['edit_treino']
+                    st.rerun()
 
     # Notificar jogadores
     st.subheader("📧 Notificar Jogadores sobre Treino")
