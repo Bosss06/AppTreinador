@@ -82,7 +82,17 @@ fix_env_encoding()
 # === FUNÇÕES ESPECÍFICAS PARA STREAMLIT CLOUD ===
 def is_streamlit_cloud():
     """Detecta se está rodando no Streamlit Cloud"""
-    return os.getenv('STREAMLIT_SHARING_MODE') == 'true' or 'streamlit.app' in os.getenv('HOSTNAME', '')
+    # Múltiplas verificações para detectar Streamlit Cloud
+    cloud_indicators = [
+        os.getenv('STREAMLIT_SHARING_MODE') == 'true',
+        'streamlit.app' in os.getenv('HOSTNAME', ''),
+        'streamlit' in os.getenv('HOSTNAME', ''),
+        os.getenv('STREAMLIT_SERVER_PORT') is not None,
+        not os.path.exists('C:\\'),  # Não é Windows local
+        os.path.exists('/app')  # Diretório típico do container
+    ]
+    
+    return any(cloud_indicators)
 
 def create_cloud_safe_backup():
     """Cria backup otimizado para Streamlit Cloud"""
@@ -745,23 +755,159 @@ class UIComponents:
     """Componentes reutilizáveis da interface"""
     
     @staticmethod
+    def baixar_foto_dropbox(caminho_dropbox):
+        """Baixa foto do Dropbox"""
+        try:
+            dbx = get_dropbox_client_with_retry()
+            if not dbx:
+                return None
+            
+            # Baixar arquivo do Dropbox
+            metadata, response = dbx.files_download(caminho_dropbox)
+            return response.content
+            
+        except Exception as e:
+            print(f"Erro ao baixar foto do Dropbox: {str(e)}")
+            return None
+    
+    @staticmethod
+    def upload_foto_dropbox(foto_bytes, nome_jogador):
+        """Faz upload de foto para o Dropbox"""
+        try:
+            dbx = get_dropbox_client_with_retry()
+            if not dbx:
+                return None
+            
+            # Caminho no Dropbox
+            caminho_dropbox = f"/app_treinador/fotos/{nome_jogador.lower().replace(' ', '_')}.png"
+            
+            # Upload para Dropbox
+            dbx.files_upload(foto_bytes, caminho_dropbox, mode=dropbox.files.WriteMode.overwrite)
+            return caminho_dropbox
+            
+        except Exception as e:
+            print(f"Erro ao fazer upload de foto para Dropbox: {str(e)}")
+            return None
+    
+    @staticmethod
+    def sincronizar_fotos_dropbox():
+        """Sincroniza todas as fotos com o Dropbox"""
+        if not is_streamlit_cloud():
+            return True  # Não precisa sincronizar localmente
+        
+        try:
+            dbx = get_dropbox_client_with_retry()
+            if not dbx:
+                st.warning("⚠️ Não foi possível conectar ao Dropbox para sincronizar fotos")
+                return False
+            
+            data = DataManager.load_data()
+            jogadores = data.get('jogadores', [])
+            
+            fotos_sincronizadas = 0
+            
+            for jogador in jogadores:
+                nome = jogador.get('nome', '')
+                login = jogador.get('login', nome.lower().replace(' ', '_'))
+                
+                # Verificar se já tem foto no Dropbox
+                if jogador.get('foto_dropbox'):
+                    continue
+                
+                # Tentar criar foto placeholder e fazer upload
+                try:
+                    foto_placeholder = UIComponents.criar_foto_placeholder(nome)
+                    caminho_dropbox = UIComponents.upload_foto_dropbox(foto_placeholder, nome)
+                    
+                    if caminho_dropbox:
+                        # Atualizar dados do jogador
+                        jogador['foto_dropbox'] = caminho_dropbox
+                        fotos_sincronizadas += 1
+                        
+                except Exception as e:
+                    print(f"Erro ao sincronizar foto de {nome}: {str(e)}")
+            
+            if fotos_sincronizadas > 0:
+                DataManager.save_data(data)
+                st.success(f"✅ {fotos_sincronizadas} fotos sincronizadas com Dropbox!")
+            
+            return True
+            
+        except Exception as e:
+            st.error(f"❌ Erro na sincronização de fotos: {str(e)}")
+            return False
+    
+    @staticmethod
+    def criar_foto_placeholder(nome_jogador):
+        """Cria uma foto placeholder para um jogador"""
+        try:
+            from io import BytesIO
+            
+            # Criar imagem 150x150 com nome do jogador
+            img = Image.new('RGB', (150, 150), color='#007acc')
+            draw = ImageDraw.Draw(img)
+            
+            # Adicionar texto com o nome
+            try:
+                font = ImageFont.load_default()
+            except:
+                font = None
+            
+            # Pegar iniciais do nome
+            iniciais = ''.join([palavra[0].upper() for palavra in nome_jogador.split() if palavra])[:3]
+            
+            # Calcular posição central do texto
+            if font:
+                bbox = draw.textbbox((0, 0), iniciais, font=font)
+                text_width = bbox[2] - bbox[0]
+                text_height = bbox[3] - bbox[1]
+            else:
+                text_width, text_height = 30, 10
+            
+            x = (150 - text_width) // 2
+            y = (150 - text_height) // 2
+            
+            # Desenhar o texto
+            draw.text((x, y), iniciais, fill='white', font=font)
+            
+            # Converter para bytes
+            img_bytes = BytesIO()
+            img.save(img_bytes, format='PNG')
+            return img_bytes.getvalue()
+            
+        except Exception as e:
+            print(f"Erro ao criar foto placeholder: {str(e)}")
+            return None
+    
+    @staticmethod
     def mostrar_card_jogador(jogador: Dict, read_only: bool = False, hide_contacts: bool = False):
         col1, col2 = st.columns([1, 3])
         
         with col1:
-            foto_valida = False
-            if jogador.get('foto') and os.path.exists(jogador['foto']):
-                try:
-                    # Verificar se é uma imagem válida
-                    with Image.open(jogador['foto']) as img:
-                        foto_valida = True
-                        st.image(jogador['foto'], use_container_width=True)
-                except (IOError, OSError, Exception):
-                    # Se não conseguir abrir a imagem, usar avatar padrão
-                    foto_valida = False
+            foto_exibida = False
             
-            if not foto_valida:
-                avatar_url = f"https://ui-avatars.com/api/?name={jogador['nome'].replace(' ', '+')}&size=150"
+            # Tentar carregar foto do Dropbox se estiver no cloud
+            if is_streamlit_cloud() and jogador.get('foto_dropbox'):
+                try:
+                    foto_bytes = UIComponents.baixar_foto_dropbox(jogador['foto_dropbox'])
+                    if foto_bytes:
+                        st.image(foto_bytes, use_container_width=True)
+                        foto_exibida = True
+                except Exception as e:
+                    st.warning(f"Erro ao carregar foto do Dropbox: {str(e)}")
+            
+            # Tentar foto local se não conseguiu do Dropbox
+            if not foto_exibida and jogador.get('foto') and os.path.exists(jogador['foto']):
+                try:
+                    with Image.open(jogador['foto']) as img:
+                        st.image(jogador['foto'], use_container_width=True)
+                        foto_exibida = True
+                except (IOError, OSError, Exception):
+                    pass
+            
+            # Se nenhuma foto funcionou, usar avatar padrão
+            if not foto_exibida:
+                avatar_url = f"https://ui-avatars.com/api/?name={jogador['nome'].replace(' ', '+')}&size=150&background=007acc&color=fff"
                 st.image(avatar_url, use_container_width=True)
         
         with col2:
@@ -933,11 +1079,32 @@ class UIComponents:
 
                             # Processar foto se fornecida
                             if foto:
-                                os.makedirs("data/fotos", exist_ok=True)
-                                img = ImageOps.fit(Image.open(foto), (300, 300))
-                                foto_path = f"data/fotos/{login.lower().replace(' ', '_')}.png"
-                                img.save(foto_path)
-                                novo_jogador["foto"] = foto_path
+                                try:
+                                    # Redimensionar imagem
+                                    img = ImageOps.fit(Image.open(foto), (300, 300))
+                                    
+                                    if is_streamlit_cloud():
+                                        # No Streamlit Cloud, fazer upload direto para Dropbox
+                                        img_bytes = BytesIO()
+                                        img.save(img_bytes, format='PNG')
+                                        img_bytes.seek(0)
+                                        
+                                        caminho_dropbox = UIComponents.upload_foto_dropbox(img_bytes.getvalue(), nome)
+                                        if caminho_dropbox:
+                                            novo_jogador["foto_dropbox"] = caminho_dropbox
+                                            st.success("📸 Foto enviada para Dropbox com sucesso!")
+                                        else:
+                                            st.warning("⚠️ Não foi possível enviar foto para Dropbox")
+                                    else:
+                                        # Localmente, salvar no sistema de arquivos
+                                        os.makedirs("data/fotos", exist_ok=True)
+                                        foto_path = f"data/fotos/{login.lower().replace(' ', '_')}.png"
+                                        img.save(foto_path)
+                                        novo_jogador["foto"] = foto_path
+                                        
+                                except Exception as e:
+                                    st.error(f"❌ Erro ao processar foto: {str(e)}")
+                                    # Continuar sem foto
 
                             # Salvar no banco de dados
                             data = DataManager.load_data()
@@ -1117,6 +1284,13 @@ def pagina_dashboard():
 def pagina_jogadores():
     """Página de gestão de jogadores"""
     st.title("👥 Lista de Jogadores")
+    
+    # Sincronizar fotos no Streamlit Cloud
+    if is_streamlit_cloud():
+        if st.button("🔄 Sincronizar Fotos com Dropbox", help="Criar fotos para jogadores que não têm"):
+            with st.spinner("Sincronizando fotos..."):
+                UIComponents.sincronizar_fotos_dropbox()
+    
     data = DataManager.load_data()
 
     is_treinador = st.session_state.get('tipo_usuario') == 'treinador'
@@ -2392,6 +2566,24 @@ def main():
     if not st.session_state.get('autenticado'):
         pagina_login()
         return
+
+    # Verificação e sincronização de fotos (apenas no Streamlit Cloud)
+    if is_streamlit_cloud() and st.session_state.get('tipo_usuario') == 'treinador':
+        if 'fotos_verificadas' not in st.session_state:
+            # Verificar se há jogadores sem foto no Dropbox
+            data = DataManager.load_data()
+            jogadores_sem_foto = [j for j in data.get('jogadores', []) if not j.get('foto_dropbox')]
+            
+            if len(jogadores_sem_foto) > 0:
+                st.sidebar.warning(f"⚠️ {len(jogadores_sem_foto)} jogadores sem foto")
+                if st.sidebar.button("🔄 Criar Fotos Automaticamente"):
+                    with st.spinner("Criando fotos..."):
+                        UIComponents.sincronizar_fotos_dropbox()
+                        st.rerun()
+            else:
+                st.sidebar.success("✅ Todas as fotos sincronizadas")
+            
+            st.session_state['fotos_verificadas'] = True
 
     # Obter menus
     user_type = st.session_state.get('tipo_usuario', 'jogador')
