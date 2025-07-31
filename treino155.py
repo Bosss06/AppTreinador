@@ -21,20 +21,46 @@ from dropbox import Dropbox
 from dropbox.exceptions import AuthError, ApiError, HttpError
 import calendar
 
+# === CONFIGURAÇÃO SEGURA PARA CLOUD ===
+try:
+    from cloud_config import safe_initialization, detect_environment
+    CLOUD_CONFIG_AVAILABLE = True
+    # Inicializar configuração segura
+    init_success, env_info = safe_initialization()
+    IS_CLOUD = env_info['is_cloud'] if env_info else False
+except ImportError:
+    CLOUD_CONFIG_AVAILABLE = False
+    IS_CLOUD = False
+
 # === IMPORTAR GERENCIADOR DE PERSISTÊNCIA ===
 try:
     from persistence_manager import init_robust_persistence, show_persistence_status
     PERSISTENCE_AVAILABLE = True
 except ImportError:
     PERSISTENCE_AVAILABLE = False
-    st.warning("⚠️ Módulo de persistência não encontrado - usando sistema básico")
+    if not IS_CLOUD:  # Só mostrar warning se não for cloud
+        st.warning("⚠️ Módulo de persistência não encontrado - usando sistema básico")
 
 # === IMPORTAR OTIMIZAÇÕES ===
 try:
-    from streamlit_optimizations import optimize_for_cloud, load_cached_data, check_internet_connectivity
+    from streamlit_optimizations import optimize_for_cloud, load_cached_data, check_internet_connectivity, is_streamlit_cloud
     OPTIMIZATIONS_AVAILABLE = True
 except ImportError:
     OPTIMIZATIONS_AVAILABLE = False
+    # Função fallback se otimizações não estão disponíveis
+    def is_streamlit_cloud():
+        """Detecta se está rodando no Streamlit Cloud"""
+        if CLOUD_CONFIG_AVAILABLE:
+            return IS_CLOUD
+        cloud_indicators = [
+            os.getenv('STREAMLIT_SHARING_MODE') == 'true',
+            'streamlit.app' in os.getenv('HOSTNAME', ''),
+            'streamlit' in os.getenv('HOSTNAME', ''),
+            os.getenv('STREAMLIT_SERVER_PORT') is not None,
+            not os.path.exists('C:\\'),  # Não é Windows local
+            os.path.exists('/app')  # Diretório típico do container
+        ]
+        return any(cloud_indicators)
 
 # === CONFIGURAÇÃO PARA STREAMLIT CLOUD ===
 def ensure_directories():
@@ -96,20 +122,6 @@ def fix_env_encoding():
 fix_env_encoding()
 
 # === FUNÇÕES ESPECÍFICAS PARA STREAMLIT CLOUD ===
-def is_streamlit_cloud():
-    """Detecta se está rodando no Streamlit Cloud"""
-    # Múltiplas verificações para detectar Streamlit Cloud
-    cloud_indicators = [
-        os.getenv('STREAMLIT_SHARING_MODE') == 'true',
-        'streamlit.app' in os.getenv('HOSTNAME', ''),
-        'streamlit' in os.getenv('HOSTNAME', ''),
-        os.getenv('STREAMLIT_SERVER_PORT') is not None,
-        not os.path.exists('C:\\'),  # Não é Windows local
-        os.path.exists('/app')  # Diretório típico do container
-    ]
-    
-    return any(cloud_indicators)
-
 def create_cloud_safe_backup():
     """Cria backup otimizado para Streamlit Cloud"""
     try:
