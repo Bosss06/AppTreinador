@@ -14,3 +14,13 @@ requests>=2.28.0
 # Outras dependências
 numpy>=1.21.0
 pytz>=2021.3
+
+streamlit
+pandas
+pillow
+fpdf2
+python-dotenv
+bcrypt
+dropbox
+requests
+urllib3
