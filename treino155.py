@@ -4,6 +4,7 @@ import bcrypt
 import logging
 import smtplib
 import uuid
+import requests
 from datetime import datetime, date
 from io import BytesIO
 from typing import Dict, List, Optional
@@ -19,6 +20,21 @@ import dropbox
 from dropbox import Dropbox
 from dropbox.exceptions import AuthError, ApiError, HttpError
 import calendar
+
+# === IMPORTAR GERENCIADOR DE PERSISTÊNCIA ===
+try:
+    from persistence_manager import init_robust_persistence, show_persistence_status
+    PERSISTENCE_AVAILABLE = True
+except ImportError:
+    PERSISTENCE_AVAILABLE = False
+    st.warning("⚠️ Módulo de persistência não encontrado - usando sistema básico")
+
+# === IMPORTAR OTIMIZAÇÕES ===
+try:
+    from streamlit_optimizations import optimize_for_cloud, load_cached_data, check_internet_connectivity
+    OPTIMIZATIONS_AVAILABLE = True
+except ImportError:
+    OPTIMIZATIONS_AVAILABLE = False
 
 # === CONFIGURAÇÃO PARA STREAMLIT CLOUD ===
 def ensure_directories():
@@ -149,8 +165,6 @@ logging.basicConfig(level=logging.INFO)
 def auto_refresh_dropbox_token():
     """Tenta renovar automaticamente o token do Dropbox se necessário"""
     try:
-        import requests
-        
         refresh_token = os.getenv('DROPBOX_REFRESH_TOKEN')
         app_key = os.getenv('DROPBOX_APP_KEY')
         app_secret = os.getenv('DROPBOX_APP_SECRET')
@@ -532,6 +546,185 @@ def inject_keep_alive_script():
     }, 60000); // Verificar a cada minuto
     </script>
     """, unsafe_allow_html=True)
+
+# === SISTEMA DE PERSISTÊNCIA ROBUSTO ===
+def init_persistent_storage():
+    """Inicializa sistema de armazenamento persistente para evitar resets"""
+    try:
+        # Verificar se já existe uma sessão persistente
+        if 'persistent_data_initialized' not in st.session_state:
+            st.session_state.persistent_data_initialized = True
+            
+            # Tentar carregar dados existentes
+            data = DataManager.load_data()
+            
+            # Se não há dados ou dados estão vazios, tentar restaurar automaticamente
+            if not data or not data.get('jogadores', []):
+                st.info("🔄 Detectado possível reset - Tentando restaurar dados automaticamente...")
+                auto_restore_from_backup()
+            
+            # Garantir que fotos existem
+            ensure_photos_persistence()
+            
+            # Fazer backup preventivo
+            if is_streamlit_cloud():
+                create_backup_with_auto_retry(dropbox_only=True)
+                
+        # Executar verificações periódicas
+        periodic_data_check()
+        
+    except Exception as e:
+        st.error(f"❌ Erro na inicialização do armazenamento persistente: {str(e)}")
+
+def auto_restore_from_backup():
+    """Restaura automaticamente do backup mais recente se dados estão vazios"""
+    try:
+        if is_streamlit_cloud():
+            # No cloud, verificar backups do Dropbox
+            backups = list_dropbox_backups_with_retry()
+            if backups:
+                latest_backup = max(backups, key=lambda x: x.get('server_modified', ''))
+                backup_name = latest_backup['name']
+                st.info(f"🔄 Restaurando do backup: {backup_name}")
+                
+                if restore_from_dropbox_with_retry(backup_name, restore_photos=True):
+                    st.success("✅ Dados restaurados com sucesso!")
+                    st.rerun()
+                else:
+                    st.warning("⚠️ Falha na restauração automática")
+        else:
+            # Localmente, verificar backups locais
+            backup_files = []
+            if os.path.exists(BACKUP_DIR):
+                backup_files = [f for f in os.listdir(BACKUP_DIR) if f.endswith('.zip')]
+            
+            if backup_files:
+                latest_backup = max(backup_files, key=lambda x: os.path.getctime(os.path.join(BACKUP_DIR, x)))
+                st.info(f"🔄 Restaurando do backup local: {latest_backup}")
+                # Implementar restauração local se necessário
+                
+    except Exception as e:
+        st.error(f"❌ Erro na restauração automática: {str(e)}")
+
+def ensure_photos_persistence():
+    """Garante que as fotos persistam entre sessões"""
+    try:
+        data = DataManager.load_data()
+        jogadores = data.get('jogadores', [])
+        
+        if not jogadores:
+            return
+            
+        photos_missing = []
+        
+        for jogador in jogadores:
+            nome = jogador.get('nome', '')
+            
+            # Verificar se foto existe no Dropbox
+            if is_streamlit_cloud():
+                if not jogador.get('foto_dropbox'):
+                    photos_missing.append(nome)
+            else:
+                # Verificar foto local
+                foto_path = jogador.get('foto')
+                if not foto_path or not os.path.exists(foto_path):
+                    photos_missing.append(nome)
+        
+        if photos_missing and is_streamlit_cloud():
+            st.info(f"🔄 Criando fotos para {len(photos_missing)} jogadores...")
+            UIComponents.sincronizar_fotos_dropbox()
+            
+    except Exception as e:
+        st.warning(f"⚠️ Erro ao verificar persistência de fotos: {str(e)}")
+
+def periodic_data_check():
+    """Verificação periódica para evitar perda de dados"""
+    try:
+        # Verificar a cada 5 minutos (300 segundos)
+        current_time = time.time()
+        
+        if 'last_data_check' not in st.session_state:
+            st.session_state.last_data_check = current_time
+        
+        time_since_check = current_time - st.session_state.last_data_check
+        
+        if time_since_check > 300:  # 5 minutos
+            st.session_state.last_data_check = current_time
+            
+            # Verificar se dados ainda existem
+            data = DataManager.load_data()
+            
+            if not data or len(data.get('jogadores', [])) == 0:
+                st.warning("⚠️ Detectada possível perda de dados - iniciando recuperação...")
+                auto_restore_from_backup()
+            else:
+                # Fazer backup preventivo
+                if is_streamlit_cloud() and current_time % 1800 < 10:  # A cada 30 minutos
+                    create_backup_with_auto_retry(dropbox_only=True)
+                    
+    except Exception as e:
+        pass  # Falha silenciosa para não interromper a app
+
+def force_manual_backup():
+    """Força um backup manual imediato"""
+    try:
+        st.info("🔄 Fazendo backup manual...")
+        
+        if is_streamlit_cloud():
+            success = create_backup_with_auto_retry(dropbox_only=True)
+        else:
+            success = create_backup_with_auto_retry()
+            
+        if success:
+            st.success("✅ Backup manual concluído com sucesso!")
+        else:
+            st.error("❌ Falha no backup manual")
+            
+    except Exception as e:
+        st.error(f"❌ Erro no backup manual: {str(e)}")
+
+def show_data_persistence_status():
+    """Mostra status do sistema de persistência na sidebar"""
+    try:
+        st.sidebar.markdown("---")
+        st.sidebar.subheader("🔒 Persistência de Dados")
+        
+        data = DataManager.load_data()
+        jogadores_count = len(data.get('jogadores', []))
+        treinos_count = len(data.get('treinos', {}))
+        
+        if jogadores_count > 0:
+            st.sidebar.success(f"✅ {jogadores_count} jogadores carregados")
+        else:
+            st.sidebar.error("❌ Nenhum jogador encontrado")
+            
+        if is_streamlit_cloud():
+            st.sidebar.info("🌐 Modo Cloud Ativo")
+            
+            # Verificar conectividade Dropbox
+            dbx = get_dropbox_client_with_retry()
+            if dbx:
+                st.sidebar.success("✅ Dropbox conectado")
+            else:
+                st.sidebar.error("❌ Dropbox desconectado")
+        else:
+            st.sidebar.info("💻 Modo Local")
+            
+        # Botão de backup manual
+        if st.sidebar.button("🔄 Backup Manual", help="Força um backup imediato"):
+            force_manual_backup()
+            
+        # Status da última verificação
+        if 'last_data_check' in st.session_state:
+            last_check = st.session_state.last_data_check
+            time_since = time.time() - last_check
+            if time_since < 60:
+                st.sidebar.caption(f"🕐 Última verificação: {int(time_since)}s atrás")
+            else:
+                st.sidebar.caption(f"🕐 Última verificação: {int(time_since/60)}min atrás")
+                
+    except Exception as e:
+        st.sidebar.error(f"❌ Erro no status: {str(e)}")
 
 # --- Constantes ---
 ASSETS_DIR = "assets"
@@ -2535,6 +2728,24 @@ def get_menu_options(user_type):
 
 def main():
     """Função principal da aplicação"""
+    
+    # === APLICAR OTIMIZAÇÕES ===
+    if OPTIMIZATIONS_AVAILABLE:
+        optimize_for_cloud()
+        
+        # Verificar conectividade se no cloud
+        if is_streamlit_cloud() and not check_internet_connectivity():
+            st.error("❌ Problemas de conectividade detectados")
+    
+    # === SISTEMA DE PERSISTÊNCIA ROBUSTO AVANÇADO ===
+    if PERSISTENCE_AVAILABLE:
+        # Usar sistema avançado de persistência
+        if not init_robust_persistence():
+            st.error("❌ Falha crítica no sistema de persistência")
+    else:
+        # Usar sistema básico de persistência
+        init_persistent_storage()
+    
     # Manter aplicação ativa
     keep_alive()
     inject_keep_alive_script()
@@ -2545,16 +2756,33 @@ def main():
     else:
         st.sidebar.warning("🌐 Executando no Streamlit Cloud")
     
+    # Mostrar status de persistência na sidebar
+    if PERSISTENCE_AVAILABLE:
+        show_persistence_status()
+    else:
+        show_data_persistence_status()
+    
     # Verificar e inicializar dados
     if not os.path.exists(ASSETS_DIR):
         os.makedirs(ASSETS_DIR)
     
     auth = Authentication()
     
-    # Inicializar dados
-    data = DataManager.load_data()
+    # Inicializar dados com verificação robusta
+    if OPTIMIZATIONS_AVAILABLE:
+        # Usar dados com cache
+        data = load_cached_data()
+    else:
+        data = DataManager.load_data()
+    
+    # Se não há dados, tentar recuperar
+    if not data or not data.get('jogadores', []):
+        st.warning("⚠️ Dados não encontrados - Tentando recuperação automática...")
+        auto_restore_from_backup()
+        data = DataManager.load_data()  # Recarregar após tentativa de recuperação
+    
     needs_save = False
-    for jogador in data['jogadores']:
+    for jogador in data.get('jogadores', []):
         if 'id' not in jogador:
             jogador['id'] = str(uuid.uuid4())
             needs_save = True
