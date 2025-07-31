@@ -6,6 +6,21 @@ import requests
 from requests.adapters import HTTPAdapter
 from urllib3.util.retry import Retry
 
+# === FUNÇÕES UTILITÁRIAS ===
+def is_streamlit_cloud():
+    """Detecta se está rodando no Streamlit Cloud"""
+    # Múltiplas verificações para detectar Streamlit Cloud
+    cloud_indicators = [
+        os.getenv('STREAMLIT_SHARING_MODE') == 'true',
+        'streamlit.app' in os.getenv('HOSTNAME', ''),
+        'streamlit' in os.getenv('HOSTNAME', ''),
+        os.getenv('STREAMLIT_SERVER_PORT') is not None,
+        not os.path.exists('C:\\'),  # Não é Windows local
+        os.path.exists('/app')  # Diretório típico do container
+    ]
+    
+    return any(cloud_indicators)
+
 # Cache para dados
 @st.cache_data(ttl=3600, show_spinner=False)
 def load_cached_data():
@@ -17,8 +32,12 @@ def load_cached_data():
 @st.cache_resource(ttl=1800, show_spinner=False)
 def get_cached_dropbox_client():
     """Obtém cliente Dropbox com cache"""
-    from APP_FINAL import get_dropbox_client_with_retry
-    return get_dropbox_client_with_retry()
+    # Importar localmente para evitar dependência circular
+    try:
+        from APP_FINAL import get_dropbox_client_with_retry
+        return get_dropbox_client_with_retry()
+    except ImportError:
+        return None
 
 # Configurações de timeout para requests
 
@@ -61,9 +80,7 @@ def check_internet_connectivity():
 def optimize_for_cloud():
     """Aplica otimizações específicas para Streamlit Cloud"""
     
-    # Verificar se está no cloud
-    from APP_FINAL import is_streamlit_cloud
-    
+    # Verificar se está no cloud (usando função local)
     if is_streamlit_cloud():
         # Reduzir tamanho máximo de upload
         try:
