@@ -75,13 +75,27 @@ def get_pdf_modules():
 import requests
 import hashlib
 
+def get_secret_value(chave, padrao=None):
+    """Obtém valor de st.secrets sem quebrar quando secrets não existe."""
+    try:
+        return st.secrets.get(chave, padrao)
+    except Exception:
+        return padrao
+
+def has_secret_keys(*chaves):
+    """Verifica se todas as chaves existem em st.secrets de forma segura."""
+    try:
+        return all(chave in st.secrets for chave in chaves)
+    except Exception:
+        return False
+
 def get_github_token():
     """Obtém token do GitHub dos secrets do Streamlit"""
-    return st.secrets.get("GITHUB_TOKEN", None)
+    return get_secret_value("GITHUB_TOKEN", None)
 
 def get_backup_gist_id():
     """Obtém ID do Gist de backup dos secrets do Streamlit"""
-    return st.secrets.get("BACKUP_GIST_ID", None)
+    return get_secret_value("BACKUP_GIST_ID", None)
 
 def criar_hash_dados(dados):
     """Cria hash dos dados para verificar mudanças"""
@@ -4110,9 +4124,9 @@ def mostrar_configuracao_email():
     
     try:
         if hasattr(st, 'secrets'):
-            email_configurado = 'EMAIL_USER' in st.secrets and 'EMAIL_PASSWORD' in st.secrets
+            email_configurado = has_secret_keys('EMAIL_USER', 'EMAIL_PASSWORD')
             if email_configurado:
-                email_user = st.secrets.get("EMAIL_USER", "")
+                email_user = get_secret_value("EMAIL_USER", "")
     except Exception:
         email_configurado = False
     
@@ -4714,14 +4728,14 @@ def mostrar_central_email():
     email_configurado = False
     try:
         if hasattr(st, 'secrets'):
-            email_configurado = 'EMAIL_USER' in st.secrets and 'EMAIL_PASSWORD' in st.secrets
+            email_configurado = has_secret_keys('EMAIL_USER', 'EMAIL_PASSWORD')
     except Exception:
         email_configurado = False
     
     if email_configurado:
         st.success("✅ Sistema de email configurado e ativo")
         try:
-            email_user = st.secrets.get("EMAIL_USER", "")
+            email_user = get_secret_value("EMAIL_USER", "")
             st.info(f"📧 Enviando de: {email_user}")
         except:
             pass
